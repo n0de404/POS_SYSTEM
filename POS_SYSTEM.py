@@ -27,7 +27,7 @@ from PyQt6.QtGui import QColor, QPixmap, QAction, QIcon, QFont
 from PyQt6.QtCore import Qt, QSize, QStringListModel
 
 # --- Global Variables ---
-products = {}  # Stores product data from CSV: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "..."}]}
+products = {}  # Stores product data from CSV: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
 cart = []  # Stores items currently in the cart
 current_item_count = 1  # Default quantity for next scanned item
 current_discount = 0.0  # Default discount percentage for next scanned item
@@ -38,6 +38,9 @@ current_sales_number = 1  # For unique sales receipt numbers
 current_transaction_number = 1  # For unique transaction numbers
 
 sales_summary = {}  # Stores sales data for reporting: {barcode: {"qty_sold": ..., "revenue": ...}}
+product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
+promo_inventory_map = {}  # Maps promo code to the number of base units consumed per sale
+product_promo_columns = []  # Tracks additional promo pricing columns detected in the products CSV
 
 users_data = {}  # Stores usernames and their passwords: {username: password}
 current_user_name = None  # Stores the username of the currently logged-in user
@@ -53,6 +56,7 @@ INVENTORY_SUMMARY_FILE = "inventory_summary.csv"
 SALES_SUMMARY_FILE = "sales_summary.json"
 RECEIPTS_ARCHIVE_FILE = "receipts_archive.json"
 TENDERED_AMOUNTS_FILE = "tendered_amounts.json"
+PROMO_INVENTORY_FILE = "PromoInventory.csv"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
 
@@ -250,52 +254,170 @@ def show_info(title, message, parent=None):
 
 # --- CSV Handling Functions ---
 def load_products_from_csv(parent=None):
-    global products, sales_summary
+    global products, sales_summary, product_promo_columns
     products = {}
     sales_summary = {}
+    product_promo_columns = []
     try:
         with open(PRODUCTS_CSV_FILE, mode='r', newline='', encoding='utf-8') as file:
             reader = csv.DictReader(file)
-            expected_headers = ['Stock No.', 'name', 'price', 'stock', 'image_filename']
-            if not reader.fieldnames or not all(field in reader.fieldnames for field in expected_headers):
-                show_error("CSV Format Error", f"The '{PRODUCTS_CSV_FILE}' file has incorrect headers.\nExpected: {', '.join(expected_headers)}", parent)
+            base_headers = ['Stock No.', 'name', 'price', 'stock', 'image_filename']
+
+            if not reader.fieldnames:
+                show_error("CSV Format Error", f"The '{PRODUCTS_CSV_FILE}' file is missing a header row.", parent)
                 return False
+
+            missing_headers = [field for field in base_headers if field not in reader.fieldnames]
+            if missing_headers:
+                show_error(
+                    "CSV Format Error",
+                    f"The '{PRODUCTS_CSV_FILE}' file is missing required columns: {', '.join(missing_headers)}",
+                    parent
+                )
+                return False
+
+            promo_columns = [field for field in reader.fieldnames if field not in base_headers]
+            product_promo_columns = promo_columns
 
             for row in reader:
                 try:
                     barcode = row['Stock No.'].strip()
+                    if not barcode:
+                        continue  # Skip empty rows
                     name = row['name'].strip()
                     price = float(row['price'])
                     stock = int(row['stock'])
                     image_filename = row.get('image_filename', '').strip()
 
+                    promo_prices = {}
+                    for promo_code in promo_columns:
+                        value = row.get(promo_code, "").strip()
+                        if not value:
+                            continue
+                        try:
+                            promo_prices[promo_code] = float(value)
+                        except ValueError:
+                            print(f"Skipping promo price for '{promo_code}' on product '{barcode}' due to invalid value: {value}")
+
                     if barcode not in products:
                         products[barcode] = []  # Initialize a list for variants
 
-                    # Store both current stock and original stock
                     products[barcode].append({
                         "name": name,
                         "price": price,
                         "stock": stock,
-                        "original_stock": stock,  # Store original stock
-                        "image_filename": image_filename
+                        "original_stock": stock,
+                        "image_filename": image_filename,
+                        "promos": promo_prices
                     })
 
                     if barcode not in sales_summary:
                         sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
                 except (ValueError, KeyError) as e:
                     print(f"Skipping row due to data error in '{PRODUCTS_CSV_FILE}': {row} - {e}")
+
             if not products:
-                show_warning("No Products Found", f"The '{PRODUCTS_CSV_FILE}' file is empty or contains no valid product data after filtering errors.", parent)
+                show_warning(
+                    "No Products Found",
+                    f"The '{PRODUCTS_CSV_FILE}' file is empty or contains no valid product data after filtering errors.",
+                    parent
+                )
                 return False
     except FileNotFoundError:
-        show_error("File Not Found", f"The product CSV file '{PRODUCTS_CSV_FILE}' was not found.\nPlease ensure it exists in the same directory as the script with 'barcode, name, price, stock, image_filename' columns.", parent)
+        show_error(
+            "File Not Found",
+            f"The product CSV file '{PRODUCTS_CSV_FILE}' was not found.\nPlease ensure it exists in the same directory as the script and includes the required columns.",
+            parent
+        )
         return False
     except Exception as e:
         show_error("Error", f"An unexpected error occurred while loading products: {e}", parent)
         return False
     return True
 
+
+def load_promo_inventory(parent=None):
+    """
+    Loads the promo inventory mapping file that defines how many base units are consumed per promo sale.
+    Expected columns: promo_code, units_per_sale
+    """
+    global promo_inventory_map
+    promo_inventory_map = {}
+
+    if not os.path.exists(PROMO_INVENTORY_FILE):
+        print(f"Promo inventory file '{PROMO_INVENTORY_FILE}' not found. Defaulting promo usage to 1 per sale.")
+        return True
+
+    try:
+        with open(PROMO_INVENTORY_FILE, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            required_headers = ['promo_code', 'units_per_sale']
+            if not reader.fieldnames or any(field not in reader.fieldnames for field in required_headers):
+                show_error(
+                    "Promo CSV Format Error",
+                    f"The '{PROMO_INVENTORY_FILE}' file must contain the columns: promo_code, units_per_sale.",
+                    parent
+                )
+                return False
+
+            for row in reader:
+                promo_code = row.get('promo_code', '').strip()
+                units_value = row.get('units_per_sale', '').strip()
+                if not promo_code or not units_value:
+                    continue
+                try:
+                    units_per_sale = float(units_value)
+                    if units_per_sale.is_integer():
+                        units_per_sale = int(units_per_sale)
+                    promo_inventory_map[promo_code] = units_per_sale
+                except ValueError:
+                    print(f"Skipping promo inventory entry due to invalid units_per_sale value: {row}")
+    except Exception as e:
+        show_error("Error", f"An unexpected error occurred while loading promo inventory: {e}", parent)
+        return False
+
+    return True
+
+
+def rebuild_product_variant_lookup():
+    """
+    Builds a flat lookup mapping SKU codes (including promo variants) to their base product information.
+    """
+    global product_variant_lookup
+    product_variant_lookup = {}
+
+    for barcode, variants in products.items():
+        for index, variant in enumerate(variants):
+            base_entry = {
+                "sku": barcode,
+                "base_barcode": barcode,
+                "variant_index": index,
+                "promo_code": None,
+                "price": variant['price'],
+                "name": variant['name'],
+                "inventory_usage": 1,
+                "image_filename": variant.get('image_filename', '')
+            }
+
+            # Only set the base barcode entry once to preserve the primary lookup
+            product_variant_lookup.setdefault(barcode, base_entry)
+
+            promos = variant.get('promos', {}) or {}
+            for promo_code, promo_price in promos.items():
+                promo_sku = f"{barcode}_{promo_code}"
+                inventory_usage = promo_inventory_map.get(promo_code, 1)
+                if promo_code not in promo_inventory_map:
+                    print(f"Warning: promo code '{promo_code}' is missing from '{PROMO_INVENTORY_FILE}'. Defaulting inventory usage to 1.")
+                product_variant_lookup[promo_sku] = {
+                    "sku": promo_sku,
+                    "base_barcode": barcode,
+                    "variant_index": index,
+                    "promo_code": promo_code,
+                    "price": promo_price,
+                    "name": variant['name'],
+                    "inventory_usage": inventory_usage,
+                    "image_filename": variant.get('image_filename', '')
+                }
 
 
 def save_products_to_csv(parent=None):
@@ -304,18 +426,24 @@ def save_products_to_csv(parent=None):
     """
     try:
         with open(PRODUCTS_CSV_FILE, mode='w', newline='', encoding='utf-8') as file:
-            fieldnames = ['Stock No.', 'name', 'price', 'stock', 'image_filename']
-            writer = csv.DictWriter(file, fieldnames=fieldnames) 
+            base_fields = ['Stock No.', 'name', 'price', 'stock', 'image_filename']
+            fieldnames = base_fields + product_promo_columns
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
             for barcode, variants in products.items():
                 for variant in variants:
-                    writer.writerow({
+                    row = {
                         'Stock No.': barcode,
                         'name': variant['name'],
                         'price': variant['price'],
                         'stock': variant['stock'],
-                        'image_filename': variant.get('image_filename', '')  # Ensure image_filename is written
-                    })
+                        'image_filename': variant.get('image_filename', '')
+                    }
+                    promos = variant.get('promos', {})
+                    for promo_code in product_promo_columns:
+                        value = promos.get(promo_code, "")
+                        row[promo_code] = value
+                    writer.writerow(row)
     except Exception as e:
         show_error("Save Error", f"Failed to save product data to CSV: {e}", parent)
 
@@ -480,7 +608,8 @@ def load_inventory_summary():
                         "price": price,
                         "stock": stock,
                         "original_stock": original_stock,
-                        "image_filename": ""  # You might want to load the image filename from somewhere
+                        "image_filename": "",  # You might want to load the image filename from somewhere
+                        "promos": {}
                     }]
 
                 sales_summary[barcode] = {"qty_sold": qty_sold, "revenue": revenue}
@@ -489,6 +618,8 @@ def load_inventory_summary():
         print("Inventory summary file not found. Starting with empty data.")
     except Exception as e:
         print(f"Error loading inventory summary: {e}")
+    finally:
+        rebuild_product_variant_lookup()
 
 
 def load_sales_summary():
@@ -1239,22 +1370,17 @@ class POSMainWindow(QMainWindow):
             self.clear_product_display()
             return
         item = self.cart[current_row]
-        barcode = item.get('Stock No.')
-        if barcode in products:
-            variants = products[barcode]
-            # Find variant with matching name and price (in case multiple variants)
-            # Fallback to first variant if no exact match found
-            variant = None
-            for v in variants:
-                if v['name'] == item['name']:
-                    variant = v
-                    break
-            if variant is None:
-                variant = variants[0]
+        sku = item.get('Stock No.')
+        base_barcode = item.get('base_stock_no', sku)
+        variant_index = item.get('variant_index', 0)
+        variants = products.get(base_barcode, [])
+
+        variant = variants[variant_index] if variant_index < len(variants) else (variants[0] if variants else None)
+        if variant:
             self.label_product_name_display.setText(f"Name: {item['name']}")
             self.label_product_price_display.setText(f"Price: P{item['price']:.2f}")
             self.label_product_stock_display.setText(f"Stock: {variant['stock']}")
-            self.label_product_barcode_number.setText(f"Stock No.: {barcode}")
+            self.label_product_barcode_number.setText(f"Stock No.: {sku}")
             self.display_product_image(variant.get('image_filename'))
         else:
             self.clear_product_display()
@@ -1315,7 +1441,11 @@ class POSMainWindow(QMainWindow):
         """)
 
         # Store full product list as display strings: "Product Name (barcode)"
-        self._product_search_list = [f"{variant['name']} ({barcode})" for barcode, variants in products.items() for variant in variants]
+        self._product_search_list = [
+            f"{data['name']} ({sku})" for sku, data in product_variant_lookup.items()
+        ]
+        self.entry_product_search.clear()
+        self.entry_product_search.addItems(self._product_search_list)
 
         # Setup completer with case-insensitive contains matching
         self._completer_model = QStringListModel(self._product_search_list)
@@ -1339,41 +1469,43 @@ class POSMainWindow(QMainWindow):
             return
 
         filtered = []
-        for barcode, variants in products.items():
-            for variant in variants:
-                display_text = f"{variant['name']} ({barcode})"
-                if text_lower in variant['name'].lower() or text_lower in barcode.lower():
-                    filtered.append(display_text)
+        for sku, data in product_variant_lookup.items():
+            display_text = f"{data['name']} ({sku})"
+            if text_lower in data['name'].lower() or text_lower in sku.lower():
+                filtered.append(display_text)
 
         self._completer_model.setStringList(filtered)
 
     def setup_product_search_signals(self):
         self._completer.activated.connect(self.on_product_search_selected)
 
+    def refresh_product_search_options(self):
+        if not hasattr(self, "_completer_model"):
+            return
+        self._product_search_list = [
+            f"{data['name']} ({sku})" for sku, data in product_variant_lookup.items()
+        ]
+        current_text = self.entry_product_search.currentText()
+        self.entry_product_search.blockSignals(True)
+        self.entry_product_search.clear()
+        self.entry_product_search.addItems(self._product_search_list)
+        self.entry_product_search.setCurrentText(current_text)
+        self.entry_product_search.blockSignals(False)
+        self._completer_model.setStringList(self._product_search_list)
+
     def on_product_search_selected(self, selected_text):
         # Parse barcode from selected_text, update product info display and barcode entry
         start_idx = selected_text.rfind('(')
         end_idx = selected_text.rfind(')')
         if start_idx != -1 and end_idx != -1:
-            barcode = selected_text[start_idx + 1:end_idx]
-            if barcode in products:
-                for variant in products[barcode]:
-                    # Update displays similarly as previous logic:
-                    self.label_product_name_display.setText(f"PRODUCT NAME: {variant['name']}")
-                    self.label_product_price_display.setText(f"PRICE: P{variant['price']:.2f}")
-                    self.label_product_stock_display.setText(f"STOCK: {variant['stock']}")
-                    self.label_product_barcode_number.setText(f"STOCK NO.: {barcode}")
-                    self.display_product_image(variant.get('image_filename'))
-
-                # Load barcode into the barcode entry for confirmation
-                self.entry_barcode.setText(barcode)
-                self.entry_barcode.setFocus()
-
-                # Clear the product search text to keep UI clean
-                self.entry_product_search.setEditText("")
-            else:
-                show_warning("Product Not Found", f"Product with barcode '{barcode}' not found in database.", self)
+            sku = selected_text[start_idx + 1:end_idx]
+            if not self.add_item_to_cart_by_sku(sku, show_not_found=False):
+                show_warning("Product Not Found", f"Product with SKU '{sku}' not found in database.", self)
                 self.clear_product_display()
+            else:
+                self.entry_product_search.setEditText("")
+                self.entry_barcode.clear()
+                self.entry_barcode.setFocus()
         else:
             show_warning("Format Error", "Invalid product selection format.", self)
             self.clear_product_display()
@@ -1408,6 +1540,59 @@ class POSMainWindow(QMainWindow):
                 print(f"Product image file not found: {image_path}")
         self.label_product_image.setPixmap(self.default_pixmap)
 
+    def add_item_to_cart_by_sku(self, sku, show_not_found=True):
+        global current_item_count, current_discount
+        lookup = product_variant_lookup.get(sku)
+        if lookup is None:
+            if show_not_found:
+                show_warning("Not Found", f"Barcode '{sku}' not found in product database.", self)
+                self.display_product_image(None)
+            return False
+
+        base_barcode = lookup['base_barcode']
+        variant_index = lookup.get('variant_index', 0)
+        variants = products.get(base_barcode, [])
+
+        if not variants:
+            if show_not_found:
+                show_warning("Not Found", f"Base product '{base_barcode}' not found in product database.", self)
+                self.display_product_image(None)
+            return False
+
+        variant = variants[variant_index] if variant_index < len(variants) else variants[0]
+
+        qty = current_item_count
+        price = lookup['price']
+        if current_discount > 0:
+            price = price * (1 - current_discount / 100)
+        price = round(price, 2)
+
+        item = {
+            "name": lookup['name'],
+            "price": price,
+            "qty": qty,
+            "Stock No.": lookup['sku'],
+            "base_stock_no": base_barcode,
+            "variant_index": variant_index,
+            "inventory_usage": lookup.get('inventory_usage', 1),
+            "promo_code": lookup.get('promo_code'),
+            "original_unit_price": lookup['price']
+        }
+
+        self.cart.append(item)
+        self.listbox.addItem(f"{lookup['sku']} - {item['name']} x{qty} - P{item['price'] * qty:.2f}")
+
+        self.label_product_name_display.setText(f"Name: {item['name']}")
+        self.label_product_price_display.setText(f"Price: P{lookup['price']:.2f}")
+        self.label_product_stock_display.setText(f"Stock: {variant['stock']}")
+        self.label_product_barcode_number.setText(f"Stock No.: {lookup['sku']}")
+        self.display_product_image(variant.get('image_filename'))
+
+        current_item_count = 1
+        current_discount = 0.0
+        self.update_total()
+        return True
+
     def handle_scan(self):
         global current_item_count, current_discount
 
@@ -1421,43 +1606,8 @@ class POSMainWindow(QMainWindow):
         if not barcode_input:
             return
 
-        if barcode_input in products:
-            for variant in products[barcode_input]:
-                item = variant.copy()
-
-                qty = current_item_count
-
-                # REMOVE THIS STOCK CHECK
-                # if qty > variant["stock"]:
-                #     show_error("Insufficient Stock", f"Not enough stock for {item['name']}.\nAvailable: {variant['stock']} units.", self)
-                #     current_item_count = 1
-                #     current_discount = 0.0
-                #     return
-
-                price = item['price']
-                if current_discount > 0:
-                    price = price * (1 - current_discount / 100)
-
-                item['price'] = round(price, 2)
-                item['qty'] = qty
-                item['Stock No.'] = barcode_input
-
-                self.cart.append(item)
-                self.listbox.addItem(f"{barcode_input} - {item['name']} x{qty} - P{item['price'] * qty:.2f}")
-
-                # Display product info and image like product search
-                self.label_product_name_display.setText(f"Name: {item['name']}")
-                self.label_product_price_display.setText(f"Price: P{variant['price']:.2f}")
-                self.label_product_stock_display.setText(f"Stock: {variant['stock']}")  # Keep displaying stock
-                self.label_product_barcode_number.setText(f"Stock No.: {barcode_input}")
-                self.display_product_image(variant.get('image_filename'))
-
-                # Reset quantity and discount after adding item
-                current_item_count = 1
-                current_discount = 0.0
-                self.update_total()
-        else:
-            show_warning("Not Found", f"Barcode '{barcode_input}' not found in product database.", self)
+        added = self.add_item_to_cart_by_sku(barcode_input)
+        if not added:
             self.display_product_image(None)
 
     def update_total(self):
@@ -1661,9 +1811,14 @@ class POSMainWindow(QMainWindow):
             line_total_val = price * qty
             line_total = f"P{line_total_val:,.2f}"
             unit_price = f"P{price:,.2f}"
+            promo_suffix = item.get('promo_code')
             full_name = name.replace("\n", " ")
             append_columns(full_name)
-            append_columns(f"{qty} @ {unit_price}", line_total)
+            if promo_suffix:
+                label = promo_suffix if qty == 1 else f"{qty} x {promo_suffix}"
+                append_columns(f"{label} @ {unit_price}", line_total)
+            else:
+                append_columns(f"{qty} @ {unit_price}", line_total)
             receipt_text_content += "\n"
 
         receipt_text_content += "-" * width + "\n"
@@ -1698,17 +1853,28 @@ class POSMainWindow(QMainWindow):
 
         # Update stock & sales summary after transaction
         for item in self.cart:
-            barcode = item['Stock No.']
+            sku = item.get('Stock No.')
+            base_barcode = item.get('base_stock_no', sku)
             qty = item.get('qty', 1)
+            inventory_usage = item.get('inventory_usage', 1)
+            variant_index = item.get('variant_index', 0)
+            deduction_units = qty * inventory_usage
+            if isinstance(deduction_units, float) and deduction_units.is_integer():
+                deduction_units = int(deduction_units)
 
-            # Initialize sales_summary[barcode] if it doesn't exist
-            if barcode not in sales_summary:
-                sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
+            variants = products.get(base_barcode, [])
+            if variants:
+                target_variant = variants[variant_index] if variant_index < len(variants) else variants[0]
+                target_variant["stock"] -= deduction_units
+            else:
+                print(f"Warning: Unable to update inventory. Base product '{base_barcode}' not found.")
 
-            for variant in products[barcode]:
-                variant["stock"] -= qty  # Update stock for the variant
-            sales_summary[barcode]["qty_sold"] += qty
-            sales_summary[barcode]["revenue"] += item['price'] * qty
+            # Initialize sales_summary entry for the base product if missing
+            if base_barcode not in sales_summary:
+                sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
+
+            sales_summary[base_barcode]["qty_sold"] += deduction_units
+            sales_summary[base_barcode]["revenue"] += item['price'] * qty
 
         # Save updated products to CSV
         save_products_to_csv(self)
@@ -1747,6 +1913,8 @@ class POSMainWindow(QMainWindow):
         dlg.exec()
         # Refresh product search and product display after stock changes
         self.clear_product_display()
+        rebuild_product_variant_lookup()
+        self.refresh_product_search_options()
         save_inventory_summary()
         save_products_to_csv(self)
 
@@ -2290,6 +2458,11 @@ def main():
     if not load_products_from_csv():
         # Error shown inside load_products_from_csv function
         sys.exit()
+
+    if not load_promo_inventory():
+        sys.exit()
+
+    rebuild_product_variant_lookup()
 
     load_users()
 
