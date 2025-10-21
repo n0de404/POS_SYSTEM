@@ -13,6 +13,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from PyQt6.QtWidgets import QSizePolicy, QSpacerItem, QTabWidget  # Import QTabWidget
 from PyQt6.QtWidgets import QFileDialog  # Import QFileDialog for file dialog
 
@@ -53,6 +55,145 @@ RECEIPTS_ARCHIVE_FILE = "receipts_archive.json"
 TENDERED_AMOUNTS_FILE = "tendered_amounts.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
+
+RECEIPT_FONT_NAME = "LucidaConsole"
+FALLBACK_RECEIPT_FONT_NAME = "Courier"
+RECEIPT_PAGE_WIDTH_MM = 58
+RECEIPT_MARGIN_MM = 0.5
+RECEIPT_TOP_MARGIN_MM = 2
+RECEIPT_BASE_FONT_SIZE = 10
+RECEIPT_MIN_FONT_SIZE = 8
+RECEIPT_PRICE_COLUMN_WIDTH = 10
+RECEIPT_LEFT_COLUMN_TARGET = 24
+RECEIPT_LINE_SPACING_MULTIPLIER = 1.2
+RECEIPT_BOLD_OFFSET_PT = 0.3
+
+
+def get_receipt_font_name():
+    """
+    Returns the registered font name to use for receipts.
+    Attempts to register Lucida Console from the system fonts and falls back to Courier if unavailable.
+    """
+    try:
+        pdfmetrics.getFont(RECEIPT_FONT_NAME)
+        return RECEIPT_FONT_NAME
+    except KeyError:
+        possible_paths = []
+        windows_dir = os.environ.get("WINDIR")
+        if windows_dir:
+            possible_paths.append(os.path.join(windows_dir, "Fonts", "Lucon.ttf"))
+            possible_paths.append(os.path.join(windows_dir, "Fonts", "lucon.ttf"))
+        possible_paths.append("Lucon.ttf")
+
+        for candidate in possible_paths:
+            if candidate and os.path.exists(candidate):
+                try:
+                    pdfmetrics.registerFont(TTFont(RECEIPT_FONT_NAME, candidate))
+                    return RECEIPT_FONT_NAME
+                except Exception as exc:
+                    print(f"Warning: failed to register Lucida Console font from '{candidate}': {exc}")
+                    continue
+
+    print("Warning: using Courier font as fallback for receipts.")
+    return FALLBACK_RECEIPT_FONT_NAME
+
+
+def compute_receipt_layout():
+    """
+    Calculates sizing details (font size, column widths, printable character capacity) for receipts.
+    Ensures the item description column targets 32 characters and prices remain aligned while fitting within 58mm paper.
+    """
+    font_name = get_receipt_font_name()
+    margin_points = RECEIPT_MARGIN_MM * mm
+    printable_width = (RECEIPT_PAGE_WIDTH_MM * mm) - (2 * margin_points)
+    printable_width = max(printable_width, RECEIPT_PAGE_WIDTH_MM * mm)
+
+    desired_total = RECEIPT_LEFT_COLUMN_TARGET + RECEIPT_PRICE_COLUMN_WIDTH
+    font_size = RECEIPT_BASE_FONT_SIZE
+
+    def char_width(size):
+        try:
+            width = pdfmetrics.stringWidth("0", font_name, size)
+        except Exception:
+            width = pdfmetrics.stringWidth("0", FALLBACK_RECEIPT_FONT_NAME, size)
+        return max(width, 0.1)
+
+    width_per_char = char_width(font_size)
+    max_chars = int(printable_width / width_per_char)
+
+    while font_size > RECEIPT_MIN_FONT_SIZE and max_chars < desired_total:
+        font_size -= 0.5
+        width_per_char = char_width(font_size)
+        max_chars = int(printable_width / width_per_char)
+
+    max_chars = max(max_chars, 1)
+    usable_chars = max(max_chars - 1, 1)  # keep a character worth of breathing room
+    price_col_width = min(RECEIPT_PRICE_COLUMN_WIDTH, usable_chars)
+
+    if usable_chars >= RECEIPT_LEFT_COLUMN_TARGET + price_col_width:
+        left_col_width = RECEIPT_LEFT_COLUMN_TARGET
+    else:
+        left_col_width = max(usable_chars - price_col_width, 0)
+
+    total_width = left_col_width + price_col_width
+
+    if total_width > usable_chars:
+        overflow = total_width - usable_chars
+        if left_col_width >= overflow:
+            left_col_width -= overflow
+        else:
+            price_col_width = max(price_col_width - overflow, 0)
+            left_col_width = max(left_col_width, 0)
+        total_width = left_col_width + price_col_width
+
+    return {
+        "font_name": font_name,
+        "font_size": font_size,
+        "total_width": max(total_width, 1),
+        "left_width": max(left_col_width, 0),
+        "price_width": max(price_col_width, 0),
+        "max_chars": max_chars,
+        "printable_width": printable_width,
+        "line_spacing": RECEIPT_LINE_SPACING_MULTIPLIER,
+        "bold_offset": RECEIPT_BOLD_OFFSET_PT,
+    }
+
+
+def _draw_bold_text(canvas_obj, x_pos, y_pos, text, font_name, font_size, offset_pt):
+    """Draws text with a slight horizontal offset to simulate a bolder stroke."""
+    if not text:
+        return
+    canvas_obj.setFont(font_name, font_size)
+    canvas_obj.drawString(x_pos, y_pos, text)
+    if offset_pt > 0:
+        canvas_obj.drawString(x_pos + offset_pt, y_pos, text)
+
+
+def render_receipt_text(canvas_obj, receipt_text, layout, start_x, start_y):
+    """
+    Renders wrapped receipt text on the supplied canvas using the computed layout.
+    Returns the final Y position after rendering.
+    """
+    font_name = layout["font_name"]
+    font_size = layout["font_size"]
+    max_chars_per_line = max(int(layout["total_width"]), 1)
+    line_height = font_size * layout.get("line_spacing", RECEIPT_LINE_SPACING_MULTIPLIER)
+    bold_offset = layout.get("bold_offset", RECEIPT_BOLD_OFFSET_PT)
+
+    current_y = start_y
+
+    for line in receipt_text.split("\n"):
+        if line:
+            remaining = line
+            while remaining:
+                segment = remaining[:max_chars_per_line]
+                _draw_bold_text(canvas_obj, start_x, current_y, segment, font_name, font_size, bold_offset)
+                remaining = remaining[max_chars_per_line:]
+                current_y -= line_height
+        else:
+            current_y -= line_height
+
+    return current_y
 
 
 def load_admin_password():
@@ -250,35 +391,23 @@ def load_tendered_amounts():
 
 # Place this function at the top of your script, before any class definitions
 def save_receipt_pdf(receipt_text, file_path):
-    width_mm = 105
+    layout = compute_receipt_layout()
+    width_mm = RECEIPT_PAGE_WIDTH_MM
     height_mm = 297
-    margin_left_right = 10 * mm
-    margin_top_bottom = 10 * mm
+    margin_left_right = RECEIPT_MARGIN_MM * mm
+    margin_top_bottom = RECEIPT_TOP_MARGIN_MM * mm
     page_width = width_mm * mm
     page_height = height_mm * mm
 
     c = canvas.Canvas(file_path, pagesize=(page_width, page_height))
 
-    c.setFont("Courier", 8)
+    font_name = layout["font_name"]
+    font_size = layout["font_size"]
+    c.setFont(font_name, font_size)
     x_start = margin_left_right
     y_start = page_height - margin_top_bottom
 
-    text_obj = c.beginText()
-    text_obj.setTextOrigin(x_start, y_start)
-    text_obj.setFont("Courier", 8)
-    line_height = 10
-
-    printable_width = page_width - 2 * margin_left_right
-    max_chars_per_line = int(printable_width / c.stringWidth("W", "Courier", 8))
-
-    for line in receipt_text.split("\n"):
-        while len(line) > max_chars_per_line:
-            segment = line[:max_chars_per_line]
-            text_obj.textLine(segment)
-            line = line[max_chars_per_line:]
-        text_obj.textLine(line)
-
-    c.drawText(text_obj)
+    render_receipt_text(c, receipt_text, layout, x_start, y_start)
     c.showPage()
     c.save()
 
@@ -401,8 +530,11 @@ class ReceiptDialog(QDialog):
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFontFamily("Consolas")
-        self.text_edit.setFontPointSize(10)
+        layout_info = compute_receipt_layout()
+        preview_font = QFont(get_receipt_font_name())
+        preview_font.setPointSizeF(layout_info["font_size"])
+        preview_font.setBold(True)
+        self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
 
@@ -1293,11 +1425,7 @@ class POSMainWindow(QMainWindow):
             for variant in products[barcode_input]:
                 item = variant.copy()
 
-                # Determine quantity based on Buy 1 Take 1 eligibility
-                if barcode_input not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                    qty = current_item_count * 2  # Multiply quantity by 2 for eligible items
-                else:
-                    qty = current_item_count    # Use quantity as set for ineligible items
+                qty = current_item_count
 
                 # REMOVE THIS STOCK CHECK
                 # if qty > variant["stock"]:
@@ -1315,7 +1443,7 @@ class POSMainWindow(QMainWindow):
                 item['Stock No.'] = barcode_input
 
                 self.cart.append(item)
-                self.listbox.addItem(f"{barcode_input} - {item['name']} x{qty} - P{item['price'] * current_item_count:.2f}")
+                self.listbox.addItem(f"{barcode_input} - {item['name']} x{qty} - P{item['price'] * qty:.2f}")
 
                 # Display product info and image like product search
                 self.label_product_name_display.setText(f"Name: {item['name']}")
@@ -1337,14 +1465,7 @@ class POSMainWindow(QMainWindow):
         for item in self.cart:
             qty = item.get('qty', 1)
             price = item['price']
-            barcode = item.get('Stock No.')
-            # Check if item is eligible for buy 1 take 1
-            if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:   
-                # Charge only for half the qty (rounded up)
-                charge_qty = (qty + 1) // 2
-            else:
-                charge_qty = qty
-            total += price * charge_qty
+            total += price * qty
         self.label_total.setText(f"Total: P{total:,.2f}")
 
     def select_payment_method_dialog(self):
@@ -1393,18 +1514,9 @@ class POSMainWindow(QMainWindow):
         # ... (Existing code for stock availability, total calculation, payment, etc.) ...
         total = 0
         for item in self.cart:
-            barcode = item['Stock No.']
             qty = item.get('qty', 1)
             price = item['price']
-
-            # Check if item is eligible for Buy 1 Take 1
-            if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                # Charge only for half the quantity (rounded up)
-                charge_qty = (qty + 1) // 2
-            else:
-                charge_qty = qty
-
-            total += price * charge_qty  # Calculate total based on charge_qty
+            total += price * qty
 
         payment_method = self.select_payment_method_dialog()
         if payment_method is None:
@@ -1479,46 +1591,97 @@ class POSMainWindow(QMainWindow):
         sales_trans_label = f"SALES#: {next_sales_number:06d}   TRANS#: {next_transaction_number:06d}"
         sales_trans_line = f"{sales_trans_label}   {current_date}"
 
-        # Generate receipt text content
-        width = 50
+        # Generate receipt text content based on printable layout
+        layout_info = compute_receipt_layout()
+        width = int(layout_info["total_width"])
+        price_col_width = int(layout_info["price_width"])
+        left_col_width = int(layout_info["left_width"])
         receipt_text_content = ""
+
+        def wrap_left(text, target_width=None):
+            cleaned = (text or "").replace("\n", " ")
+            width_limit = target_width if target_width is not None else left_col_width
+            if width_limit <= 0:
+                return [cleaned]
+            if not cleaned:
+                return [" " * width_limit]
+            segments = [
+                cleaned[i:i + width_limit]
+                for i in range(0, len(cleaned), width_limit)
+            ]
+            return [segment.ljust(width_limit) for segment in segments]
+
+        def format_right(text):
+            if price_col_width <= 0:
+                return ""
+            right_text = (text or "").strip()
+            if len(right_text) > price_col_width:
+                right_text = right_text[-price_col_width:]
+            return right_text.rjust(price_col_width)
+
+        def append_columns(left_text, right_text=None):
+            nonlocal receipt_text_content
+            if left_col_width > 0:
+                wrap_width = left_col_width if right_text is not None else max(left_col_width, width)
+                left_lines = wrap_left(left_text, wrap_width)
+            else:
+                cleaned = (left_text or "").replace("\n", " ")
+                if not cleaned:
+                    left_lines = [""]
+                else:
+                    step = max(width, 1)
+                    left_lines = [
+                        cleaned[i:i + step] for i in range(0, len(cleaned), step)
+                    ] or [""]
+
+            if right_text is not None:
+                if left_col_width > 0:
+                    right_formatted = format_right(right_text)
+                    receipt_text_content += f"{left_lines[0]}{right_formatted}\n"
+                    for extra in left_lines[1:]:
+                        receipt_text_content += f"{extra}\n"
+                else:
+                    right_formatted = format_right(right_text)
+                    receipt_text_content += f"{right_formatted.rjust(width)}\n"
+                    for segment in left_lines:
+                        if segment:
+                            receipt_text_content += f"{segment[:width]}\n"
+            else:
+                for segment in left_lines:
+                    receipt_text_content += f"{segment[:width]}\n"
+
         receipt_text_content += f"{'SUNNYWARE PHILIPPINES':^{width}}\n"
         receipt_text_content += f"{'Metro Manila, Philippines':^{width}}\n"
-        receipt_text_content += f"{'-------- SALES ORDER SLIP --------':^{width}}\n"
+        receipt_text_content += f"{'---SALES ORDER SLIP---':^{width}}\n"
         receipt_text_content += f"{sales_trans_line:^{width}}\n\n"
         for item in self.cart:
             name = item['name']
-            barcode = item['Stock No.']
             qty = item.get('qty', 1)
             price = item['price']
-            # Calculate the chargeable quantity for the receipt *for each item*
-            if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                charge_qty = (qty + 1) // 2  # Charge for half the quantity
-            else:
-                charge_qty = qty
-            line_total_val = price * charge_qty
+            line_total_val = price * qty
             line_total = f"P{line_total_val:,.2f}"
             unit_price = f"P{price:,.2f}"
-            line1 = f"{name} x{qty}"
-            receipt_text_content += f"{line1:<38}{line_total:>12}\n"
-            receipt_text_content += f"{charge_qty}  @ {unit_price}\n\n"
+            full_name = name.replace("\n", " ")
+            append_columns(full_name)
+            append_columns(f"{qty} @ {unit_price}", line_total)
+            receipt_text_content += "\n"
 
         receipt_text_content += "-" * width + "\n"
-        receipt_text_content += f"{'Total Amount Due:':<40} P{total:,.2f}\n"
+        append_columns("Total Amount Due:", f"P{total:,.2f}")
 
         if payment_method == "cash and gcash":
-            receipt_text_content += f"{'Cash:':<40} P{cash_amount:,.2f}\n"
-            receipt_text_content += f"{'GCash:':<40} P{gcash_amount:,.2f}\n"
+            append_columns("Cash:", f"P{cash_amount:,.2f}")
+            append_columns("GCash:", f"P{gcash_amount:,.2f}")
             total_gcash_tendered += gcash_amount
             total_cash_tendered += cash_amount
         elif payment_method == "cash only":
-            receipt_text_content += f"{'Cash:':<40} P{cash_amount:,.2f}\n"
+            append_columns("Cash:", f"P{cash_amount:,.2f}")
             total_cash_tendered += cash_amount
         elif payment_method == "gcash only":
-            receipt_text_content += f"{'GCash:':<40} P{gcash_amount:,.2f}\n"
+            append_columns("GCash:", f"P{gcash_amount:,.2f}")
             total_gcash_tendered += gcash_amount
-        receipt_text_content += f"{'Change:':<42} P{change:,.2f}\n"
-        receipt_text_content += f"Payment Method: {payment_method.title():<34}\n"
+        append_columns("Change:", f"P{change:,.2f}")
+        append_columns(f"Payment Method: {payment_method.title()}")
         receipt_text_content += "-" * width + "\n"
 
         receipt_text_content += f"{current_time:^{width}}\n"
@@ -1726,22 +1889,16 @@ class SalesSummaryDialog(QDialog):
             quantity_sold = sales_data['qty_sold']
             total_revenue = sales_data['revenue']
 
-            if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                charge_qty = (quantity_sold + 1) // 2
-            else:
-                charge_qty = quantity_sold
-
             # Calculate price per item
             price_per_item = total_revenue / quantity_sold if quantity_sold > 0 else 0.0
-            # Calculate total price based on charge quantity
-            total_price = price_per_item * charge_qty
+            total_price = price_per_item * quantity_sold
 
             # Set the items in the table
             self.table.setItem(row, 0, QTableWidgetItem(barcode))
             self.table.setItem(row, 1, QTableWidgetItem(product_name))
             self.table.setItem(row, 2, QTableWidgetItem(str(quantity_sold)))
             self.table.setItem(row, 3, QTableWidgetItem(f"P{price_per_item:,.2f}"))  # Price per item
-            self.table.setItem(row, 4, QTableWidgetItem(f"P{total_price:,.2f}"))  # Total price based on charge quantity
+            self.table.setItem(row, 4, QTableWidgetItem(f"P{total_price:,.2f}"))
 
             row += 1  # Increment row counter
 
@@ -1751,18 +1908,9 @@ class SalesSummaryDialog(QDialog):
     def update_summary_labels(self):
         sales_data = self.parent().sales_summary
         total_quantity_sold = sum(data['qty_sold'] for data in sales_data.values())
-        
-        # Calculate total revenue considering the charge quantity for BOGO
         total_revenue = 0.0
         for barcode, data in sales_data.items():
-            quantity_sold = data['qty_sold']
-            if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                charge_qty = (quantity_sold + 1) // 2  # BOGO logic
-            else:
-                charge_qty = quantity_sold  # No discount for tables
-            
-            # Calculate revenue based on charge quantity
-            total_revenue += (data['revenue'] / quantity_sold) * charge_qty if quantity_sold > 0 else 0.0
+            total_revenue += data['revenue']
 
         global total_cash_tendered, total_gcash_tendered
 
@@ -1796,22 +1944,16 @@ class SalesSummaryDialog(QDialog):
                 qty_sold = data_item['qty_sold']
                 revenue = data_item['revenue']
 
-                # Apply BOGO logic for charge quantity
-                if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                    charge_qty = (qty_sold + 1) // 2  # Calculate how many items the customer pays for
-                else:
-                    charge_qty = qty_sold  # No discount for tables
-
                 # Calculate price per item
                 price_per_item = revenue / qty_sold if qty_sold > 0 else 0.0
-                total_price = price_per_item * charge_qty
+                total_price = price_per_item * qty_sold
 
                 rows.append({
                     "STOCK #": barcode,
                     "Product Name": product_name,
                     "Quantity Sold": qty_sold,
                     "Price": price_per_item,
-                    "Total Revenue": total_price  # Use total price based on charge quantity
+                    "Total Revenue": total_price
                 })
 
             df = pd.DataFrame(rows, columns=["STOCK #", "Product Name", "Quantity Sold", "Price", "Total Revenue"])
@@ -1903,15 +2045,9 @@ class SalesSummaryDialog(QDialog):
                 qty_sold = data_item['qty_sold']
                 revenue = data_item['revenue']
 
-                # Apply BOGO logic for charge quantity
-                if barcode not in ['870-BROWN', '870-GRAY', '870-MOCHA', '871-BROWN', '871-GRAY', '871-MOCHA']:
-                    charge_qty = (qty_sold + 1) // 2  # BOGO logic
-                else:
-                    charge_qty = qty_sold  # No discount for tables
-
-                # Calculate price per item and total revenue based on charge quantity
+                # Calculate price per item and total revenue
                 price_per_item = revenue / qty_sold if qty_sold > 0 else 0
-                total_price = price_per_item * charge_qty
+                total_price = price_per_item * qty_sold
                 data.append([
                     barcode,
                     product_name,
@@ -1921,6 +2057,7 @@ class SalesSummaryDialog(QDialog):
                 ])
 
                 total_quantity_sold += qty_sold
+                total_revenue += revenue
 
                 if qty_sold > max_qty:
                     max_qty = qty_sold
@@ -2077,8 +2214,11 @@ class ReceiptDialog(QDialog):
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFontFamily("Consolas")
-        self.text_edit.setFontPointSize(10)
+        layout_info = compute_receipt_layout()
+        preview_font = QFont(get_receipt_font_name())
+        preview_font.setPointSizeF(layout_info["font_size"])
+        preview_font.setBold(True)
+        self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
 
@@ -2110,10 +2250,11 @@ class ReceiptDialog(QDialog):
 
 
 def print_receipt_pdf(receipt_text, parent=None):
-    width_mm = 105
+    layout = compute_receipt_layout()
+    width_mm = RECEIPT_PAGE_WIDTH_MM
     height_mm = 297
-    margin_left_right = 10 * mm
-    margin_top_bottom = 10 * mm
+    margin_left_right = RECEIPT_MARGIN_MM * mm
+    margin_top_bottom = RECEIPT_TOP_MARGIN_MM * mm
     page_width = width_mm * mm
     page_height = height_mm * mm
 
@@ -2122,26 +2263,10 @@ def print_receipt_pdf(receipt_text, parent=None):
 
     c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
 
-    c.setFont("Courier", 8)
     x_start = margin_left_right
     y_start = page_height - margin_top_bottom
 
-    text_obj = c.beginText()
-    text_obj.setTextOrigin(x_start, y_start)
-    text_obj.setFont("Courier", 8)
-    line_height = 10
-
-    printable_width = page_width - 2 * margin_left_right
-    max_chars_per_line = int(printable_width / c.stringWidth("W", "Courier", 8))
-
-    for line in receipt_text.split("\n"):
-        while len(line) > max_chars_per_line:
-            segment = line[:max_chars_per_line]
-            text_obj.textLine(segment)
-            line = line[max_chars_per_line:]
-        text_obj.textLine(line)
-
-    c.drawText(text_obj)
+    render_receipt_text(c, receipt_text, layout, x_start, y_start)
     c.showPage()
     c.save()
 
