@@ -47,6 +47,7 @@ product_promo_columns = []  # Tracks additional promo pricing columns detected i
 bundle_promos = {}  # Stores bundle promos with their component details
 current_theme_preference = "system"
 current_theme_effective = "light"
+basket_promos = []  # Stores basket-size promo tiers
 
 users_data = {}  # Stores usernames and their passwords: {username: password}
 current_user_name = None  # Stores the username of the currently logged-in user
@@ -65,6 +66,7 @@ TENDERED_AMOUNTS_FILE = "tendered_amounts.json"
 PROMO_INVENTORY_FILE = "PromoInventory.csv"
 PROMO_BUNDLES_FILE = "PromoBundles.json"
 UI_PREFERENCES_FILE = "ui_preferences.json"
+BASKET_PROMOS_FILE = "BasketPromos.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
 
@@ -545,6 +547,60 @@ def save_bundle_promos(parent=None):
             json.dump(bundle_promos, file, indent=2)
     except Exception as exc:
         show_error("Save Error", f"Failed to save bundle promos: {exc}", parent)
+
+
+def save_basket_promos(parent=None):
+    """
+    Persists basket-size promo tiers to disk.
+    """
+    try:
+        with open(BASKET_PROMOS_FILE, mode='w', encoding='utf-8') as file:
+            json.dump({"tiers": basket_promos}, file, ensure_ascii=False, indent=4)
+    except Exception as exc:
+        show_error("Save Error", f"Failed to save basket promos: {exc}", parent)
+
+
+def load_basket_promos(parent=None):
+    """
+    Loads basket-size promos that award freebies when order totals reach defined thresholds.
+    """
+    global basket_promos
+    basket_promos = []
+
+    if not os.path.exists(BASKET_PROMOS_FILE):
+        return True
+
+    try:
+        with open(BASKET_PROMOS_FILE, mode='r', encoding='utf-8') as file:
+            data = json.load(file)
+            if isinstance(data, dict):
+                entries = data.get("tiers") or data.get("promos") or list(data.values())
+            elif isinstance(data, list):
+                entries = data
+            else:
+                entries = []
+
+            for entry in entries:
+                try:
+                    threshold = float(entry.get("threshold", 0))
+                except (TypeError, ValueError):
+                    continue
+                freebies = entry.get("freebies") or []
+                if not isinstance(freebies, list) or threshold <= 0:
+                    continue
+                basket_promos.append({
+                    "code": entry.get("code") or f"BASKET_{int(threshold)}",
+                    "name": entry.get("name") or "",
+                    "threshold": threshold,
+                    "freebies": freebies,
+                    "message": entry.get("message", "")
+                })
+            basket_promos.sort(key=lambda x: x["threshold"])
+    except Exception as exc:
+        show_error("Error", f"Failed to load basket promos: {exc}", parent)
+        return False
+
+    return True
 
 
 def save_promo_inventory(parent=None):
@@ -1193,6 +1249,10 @@ class InventoryManagementDialog(QDialog):
         self.btn_manage_bundles.clicked.connect(self.manage_bundles)
         btn_layout.addWidget(self.btn_manage_bundles)
 
+        self.btn_manage_basket = QPushButton("Manage Basket Rewards")
+        self.btn_manage_basket.clicked.connect(self.manage_basket_promos)
+        btn_layout.addWidget(self.btn_manage_basket)
+
         self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.close)
         btn_layout.addWidget(self.btn_close)
@@ -1216,6 +1276,11 @@ class InventoryManagementDialog(QDialog):
             parent = self.parent()
             if parent and hasattr(parent, "refresh_product_search_options"):
                 parent.refresh_product_search_options()
+
+    def manage_basket_promos(self):
+        dlg = BasketPromoDialog(self.products, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            load_basket_promos(self)
 
     def replenish_stock(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Replenish Stock from Excel", "", "Excel Files (*.xlsx *.xls)")
@@ -1882,6 +1947,328 @@ class BundlePromoDialog(QDialog):
         show_info("Bundle Saved", f"Bundle '{bundle_code}' saved successfully.", self)
         self.accept()
 
+
+class BasketPromoDialog(QDialog):
+    def __init__(self, products_ref, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Basket Rewards Management")
+        self.resize(760, 620)
+        self.products = products_ref
+        self.current_code = None
+
+        main_layout = QVBoxLayout(self)
+
+        info_label = QLabel("Configure basket-size reward tiers that grant freebies once an order reaches a chosen subtotal.")
+        info_label.setWordWrap(True)
+        main_layout.addWidget(info_label)
+
+        selector_layout = QHBoxLayout()
+        main_layout.addLayout(selector_layout)
+
+        selector_layout.addWidget(QLabel("Existing Tiers:"))
+        self.tier_combo = QComboBox()
+        selector_layout.addWidget(self.tier_combo, stretch=1)
+
+        self.btn_new = QPushButton("New Tier")
+        self.btn_new.clicked.connect(self.clear_form)
+        selector_layout.addWidget(self.btn_new)
+
+        self.btn_delete = QPushButton("Delete Tier")
+        self.btn_delete.clicked.connect(self.delete_tier)
+        selector_layout.addWidget(self.btn_delete)
+
+        form_layout = QGridLayout()
+        main_layout.addLayout(form_layout)
+
+        form_layout.addWidget(QLabel("Tier Code:"), 0, 0)
+        self.code_edit = QLineEdit()
+        self.code_edit.setPlaceholderText("e.g., BASKET500")
+        form_layout.addWidget(self.code_edit, 0, 1)
+
+        form_layout.addWidget(QLabel("Tier Name:"), 1, 0)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Friendly description (optional)")
+        form_layout.addWidget(self.name_edit, 1, 1)
+
+        form_layout.addWidget(QLabel("Threshold Amount (₱):"), 2, 0)
+        self.threshold_spin = QDoubleSpinBox()
+        self.threshold_spin.setRange(0.0, 1_000_000_000.0)
+        self.threshold_spin.setDecimals(2)
+        self.threshold_spin.setSingleStep(50.0)
+        form_layout.addWidget(self.threshold_spin, 2, 1)
+
+        form_layout.addWidget(QLabel("Receipt Message:"), 3, 0)
+        self.message_edit = QLineEdit()
+        self.message_edit.setPlaceholderText("Optional thank-you note that appears on receipts")
+        form_layout.addWidget(self.message_edit, 3, 1)
+
+        freebies_label = QLabel("Reward Items:")
+        freebies_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        main_layout.addWidget(freebies_label)
+
+        self.freebie_table = QTableWidget(0, 4, self)
+        self.freebie_table.setHorizontalHeaderLabels(["Stock No.", "Variant", "Product Name", "Quantity"])
+        self.freebie_table.verticalHeader().setVisible(False)
+        self.freebie_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.freebie_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        header = self.freebie_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        main_layout.addWidget(self.freebie_table)
+
+        add_layout = QHBoxLayout()
+        main_layout.addLayout(add_layout)
+
+        add_layout.addWidget(QLabel("Add Reward Item:"))
+        self.variant_combo = QComboBox()
+        add_layout.addWidget(self.variant_combo, stretch=1)
+
+        add_layout.addWidget(QLabel("Qty:"))
+        self.qty_spin = QSpinBox()
+        self.qty_spin.setRange(1, 10000)
+        add_layout.addWidget(self.qty_spin)
+
+        self.btn_add_freebie = QPushButton("Add")
+        self.btn_add_freebie.clicked.connect(self.add_freebie)
+        add_layout.addWidget(self.btn_add_freebie)
+
+        self.btn_remove_freebie = QPushButton("Remove Selected")
+        self.btn_remove_freebie.clicked.connect(self.remove_selected_freebie)
+        add_layout.addWidget(self.btn_remove_freebie)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.handle_save)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self.variant_options = []
+        self.populate_variant_options()
+        self.populate_tier_combo()
+
+        self.tier_combo.currentIndexChanged.connect(self.handle_tier_selected)
+        if self.tier_combo.count() > 0:
+            self.handle_tier_selected(self.tier_combo.currentIndex())
+        else:
+            self.clear_form()
+
+    def populate_variant_options(self):
+        self.variant_combo.clear()
+        self.variant_options = []
+        for barcode in sorted(self.products.keys()):
+            variants = self.products[barcode]
+            for index, variant in enumerate(variants):
+                name = variant.get("name", barcode)
+                label = f"{name} ({barcode}"
+                if len(variants) > 1:
+                    label += f" / Variant {index + 1}"
+                label += ")"
+                option = {
+                    "barcode": barcode,
+                    "variant_index": index,
+                    "name": name,
+                    "label": label
+                }
+                self.variant_options.append(option)
+                self.variant_combo.addItem(label, option)
+        if self.variant_options:
+            self.variant_combo.setCurrentIndex(0)
+
+    def populate_tier_combo(self):
+        self.tier_combo.blockSignals(True)
+        self.tier_combo.clear()
+        for entry in basket_promos:
+            code = entry.get("code")
+            if not code:
+                continue
+            display = f"{code} - ₱{entry.get('threshold', 0):,.2f}"
+            self.tier_combo.addItem(display, code)
+        self.tier_combo.blockSignals(False)
+
+    def clear_form(self):
+        self.current_code = None
+        self.code_edit.clear()
+        self.name_edit.clear()
+        self.threshold_spin.setValue(0.0)
+        self.message_edit.clear()
+        self.freebie_table.setRowCount(0)
+        self.tier_combo.setCurrentIndex(-1)
+        self.code_edit.setFocus()
+
+    def handle_tier_selected(self, index):
+        if index < 0:
+            self.clear_form()
+            return
+        code = self.tier_combo.itemData(index)
+        entry = self.get_tier_by_code(code)
+        if not entry:
+            self.clear_form()
+            return
+        self.current_code = code
+        self.code_edit.setText(entry.get("code", ""))
+        self.name_edit.setText(entry.get("name", ""))
+        threshold = entry.get("threshold", 0)
+        try:
+            threshold = float(threshold)
+        except (TypeError, ValueError):
+            threshold = 0
+        self.threshold_spin.setValue(max(0.0, threshold))
+        self.message_edit.setText(entry.get("message", ""))
+        self.freebie_table.setRowCount(0)
+        for freebie in entry.get("freebies", []):
+            barcode = freebie.get("barcode") or freebie.get("Stock No.") or ""
+            variant_index = int(freebie.get("variant_index", 0))
+            quantity = int(freebie.get("quantity", 1))
+            self.insert_freebie_row(barcode, variant_index, quantity)
+
+    def get_tier_by_code(self, code):
+        for entry in basket_promos:
+            if entry.get("code") == code:
+                return entry
+        return None
+
+    def insert_freebie_row(self, barcode, variant_index, quantity):
+        qty = max(1, int(quantity))
+        variants = self.products.get(barcode, [])
+        name = barcode
+        variant_label = "Default"
+        if variants:
+            if variant_index >= len(variants):
+                variant_index = 0
+            name = variants[variant_index].get("name", barcode)
+            variant_label = f"Variant {variant_index + 1}" if len(variants) > 1 else "Default"
+        row = self.freebie_table.rowCount()
+        self.freebie_table.insertRow(row)
+
+        stock_item = QTableWidgetItem(barcode)
+        stock_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+        stock_item.setData(Qt.ItemDataRole.UserRole, (barcode, variant_index))
+        self.freebie_table.setItem(row, 0, stock_item)
+
+        variant_item = QTableWidgetItem(variant_label)
+        variant_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+        self.freebie_table.setItem(row, 1, variant_item)
+
+        name_item = QTableWidgetItem(name)
+        name_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+        self.freebie_table.setItem(row, 2, name_item)
+
+        qty_spin = QSpinBox()
+        qty_spin.setRange(1, 10000)
+        qty_spin.setValue(qty)
+        self.freebie_table.setCellWidget(row, 3, qty_spin)
+
+    def add_freebie(self):
+        data = self.variant_combo.currentData()
+        if not data:
+            show_warning("Select Product", "Choose a product to add as a reward item.", self)
+            return
+        quantity = self.qty_spin.value()
+        barcode = data["barcode"]
+        variant_index = data["variant_index"]
+
+        for row in range(self.freebie_table.rowCount()):
+            item = self.freebie_table.item(row, 0)
+            if not item:
+                continue
+            existing_barcode, existing_variant = item.data(Qt.ItemDataRole.UserRole) or (None, None)
+            if existing_barcode == barcode and existing_variant == variant_index:
+                spin = self.freebie_table.cellWidget(row, 3)
+                if isinstance(spin, QSpinBox):
+                    spin.setValue(spin.value() + quantity)
+                return
+
+        self.insert_freebie_row(barcode, variant_index, quantity)
+
+    def remove_selected_freebie(self):
+        row = self.freebie_table.currentRow()
+        if row < 0:
+            show_warning("Remove Item", "Select a reward item from the list to remove.", self)
+            return
+        self.freebie_table.removeRow(row)
+
+    def collect_freebies(self):
+        freebies = []
+        for row in range(self.freebie_table.rowCount()):
+            stock_item = self.freebie_table.item(row, 0)
+            if not stock_item:
+                continue
+            barcode, variant_index = stock_item.data(Qt.ItemDataRole.UserRole) or (None, None)
+            if not barcode:
+                continue
+            qty_widget = self.freebie_table.cellWidget(row, 3)
+            quantity = qty_widget.value() if isinstance(qty_widget, QSpinBox) else 1
+            freebies.append({
+                "barcode": barcode,
+                "variant_index": int(variant_index or 0),
+                "quantity": max(1, int(quantity))
+            })
+        return freebies
+
+    def handle_save(self):
+        global basket_promos
+        code = self.code_edit.text().strip()
+        if not code:
+            show_error("Validation Error", "Tier code is required.", self)
+            return
+        threshold = float(self.threshold_spin.value())
+        if threshold <= 0:
+            show_error("Validation Error", "Threshold must be greater than zero.", self)
+            return
+        freebies = self.collect_freebies()
+        if not freebies:
+            show_error("Validation Error", "Add at least one reward item for this tier.", self)
+            return
+
+        entry = {
+            "code": code,
+            "name": self.name_edit.text().strip(),
+            "threshold": threshold,
+            "message": self.message_edit.text().strip(),
+            "freebies": freebies
+        }
+
+        replaced = False
+        for idx, existing in enumerate(basket_promos):
+            if existing.get("code") == code:
+                basket_promos[idx] = entry
+                replaced = True
+                break
+        if not replaced:
+            basket_promos.append(entry)
+
+        basket_promos.sort(key=lambda x: x.get("threshold", 0))
+        save_basket_promos(self)
+        show_info("Basket Rewards", f"Tier '{code}' saved successfully.", self)
+        self.accept()
+
+    def delete_tier(self):
+        global basket_promos
+        code = self.code_edit.text().strip()
+        if not code:
+            show_warning("Delete Tier", "Select a tier before attempting to delete.", self)
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete Tier",
+            f"Are you sure you want to delete the basket reward '{code}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        new_promos = [entry for entry in basket_promos if entry.get("code") != code]
+        if len(new_promos) == len(basket_promos):
+            show_warning("Delete Tier", f"Tier '{code}' was not found.", self)
+            return
+
+        basket_promos = new_promos
+        save_basket_promos(self)
+        show_info("Basket Rewards", f"Tier '{code}' deleted.", self)
+        self.populate_tier_combo()
+        self.clear_form()
 # ----------------- Main Window -----------------
 class POSMainWindow(QMainWindow):
     def __init__(self, username, parent=None):
@@ -1908,6 +2295,8 @@ class POSMainWindow(QMainWindow):
         self.current_effective_theme = current_theme_effective
         self.theme_actions = {}
         self.theme_action_group = None
+        self.applied_freebies = []
+        self.applied_freebie_messages = []
 
         self.init_ui()
         self.showMaximized()
@@ -2412,6 +2801,119 @@ class POSMainWindow(QMainWindow):
                 }
             """)
 
+    def remove_existing_freebies_from_cart(self):
+        """Remove any previously added freebies from the cart and UI list."""
+        if not self.cart:
+            return
+        indices_to_remove = [idx for idx, item in enumerate(self.cart) if item.get("is_freebie")]
+        if not indices_to_remove:
+            return
+        for offset, idx in enumerate(indices_to_remove):
+            adjusted_index = idx - offset
+            self.cart.pop(adjusted_index)
+            if 0 <= adjusted_index < self.listbox.count():
+                self.listbox.takeItem(adjusted_index)
+        self.update_total()
+
+    def evaluate_basket_freebies(self, subtotal):
+        """Return the list of basket promos the subtotal qualifies for."""
+        qualified = []
+        if not basket_promos:
+            return qualified
+        for promo in basket_promos:
+            threshold = promo.get("threshold", 0)
+            if subtotal >= threshold:
+                freebies = promo.get("freebies") or []
+                valid_items = []
+                for entry in freebies:
+                    barcode = entry.get("barcode") or entry.get("Stock No.") or entry.get("sku")
+                    if not barcode:
+                        continue
+                    try:
+                        qty = int(entry.get("quantity", 1))
+                    except (TypeError, ValueError):
+                        qty = 1
+                    if qty <= 0:
+                        continue
+                    try:
+                        variant_index = int(entry.get("variant_index", 0))
+                    except (TypeError, ValueError):
+                        variant_index = 0
+                    valid_items.append({
+                        "barcode": str(barcode).strip(),
+                        "variant_index": max(0, variant_index),
+                        "quantity": qty
+                    })
+                if valid_items:
+                    qualified.append({
+                        "promo": promo,
+                        "items": valid_items
+                    })
+        return qualified
+
+    def add_freebie_item(self, barcode, variant_index, quantity, promo_code):
+        """Append a freebie item to the cart and return the created cart entry."""
+        variants = products.get(barcode, [])
+        if not variants:
+            print(f"Warning: basket promo references unknown product '{barcode}'.")
+            return None
+        if variant_index >= len(variants):
+            print(f"Warning: basket promo uses invalid variant index for '{barcode}'. Using first variant.")
+            variant_index = 0
+        variant = variants[variant_index]
+        available_stock = variant.get("stock", 0)
+        if quantity > available_stock:
+            print(f"Warning: insufficient stock for freebie '{variant['name']}' ({barcode}). Requested {quantity}, available {available_stock}.")
+            return None
+
+        item = {
+            "name": variant['name'],
+            "price": 0.0,
+            "qty": quantity,
+            "Stock No.": barcode,
+            "base_stock_no": barcode,
+            "variant_index": variant_index,
+            "inventory_usage": 1,
+            "promo_code": promo_code,
+            "original_unit_price": 0.0,
+            "is_freebie": True
+        }
+        self.cart.append(item)
+        self.listbox.addItem(f"{barcode} - {item['name']} x{quantity} - FREE")
+        return item
+
+    def apply_basket_freebies_to_cart(self, subtotal):
+        """Award qualifying freebies based on the order subtotal."""
+        self.remove_existing_freebies_from_cart()
+        self.applied_freebies = []
+        self.applied_freebie_messages = []
+
+        qualified = self.evaluate_basket_freebies(subtotal)
+        if not qualified:
+            return
+
+        for entry in qualified:
+            promo = entry["promo"]
+            promo_code = promo.get("code") or "BASKET_PROMO"
+            promo_message = promo.get("message")
+            for freebie in entry["items"]:
+                added = self.add_freebie_item(
+                    freebie["barcode"],
+                    freebie["variant_index"],
+                    freebie["quantity"],
+                    promo_code
+                )
+                if added:
+                    self.applied_freebies.append({
+                        "name": added["name"],
+                        "qty": added["qty"],
+                        "promo": promo_code
+                    })
+            if promo_message:
+                self.applied_freebie_messages.append(promo_message)
+        if self.applied_freebies:
+            self.update_total()
+
     def on_product_search_selected(self, selected_text):
         # Parse barcode from selected_text, update product info display and barcode entry
         start_idx = selected_text.rfind('(')
@@ -2655,6 +3157,10 @@ class POSMainWindow(QMainWindow):
             show_info("Info", "Cart is empty. Please add items before checking out.", self)
             return
 
+        self.remove_existing_freebies_from_cart()
+        self.applied_freebies = []
+        self.applied_freebie_messages = []
+
         # Ensure sufficient stock is still available for all items (including bundles) before processing payment.
         for item in self.cart:
             qty = item.get('qty', 1)
@@ -2717,6 +3223,7 @@ class POSMainWindow(QMainWindow):
             qty = item.get('qty', 1)
             price = item['price']
             total += price * qty
+        subtotal_for_promos = total
 
         payment_method = self.select_payment_method_dialog()
         if payment_method is None:
@@ -2759,6 +3266,8 @@ class POSMainWindow(QMainWindow):
                 return
 
         change = total_paid - total
+
+        self.apply_basket_freebies_to_cart(subtotal_for_promos)
 
         # Find the highest existing sales number and transaction number in receipts_archive
         highest_sales_number = 0
@@ -2892,6 +3401,14 @@ class POSMainWindow(QMainWindow):
             total_gcash_tendered += gcash_amount
         append_columns("Change:", f"P{change:,.2f}")
         append_columns(f"Payment Method: {payment_method.title()}")
+        if self.applied_freebies:
+            append_columns("Rewards Earned:")
+            for freebie in self.applied_freebies:
+                label = f"{freebie['name']} x{freebie['qty']}"
+                append_columns(label, "FREE")
+            for message in self.applied_freebie_messages:
+                if message:
+                    append_columns(message)
         receipt_text_content += "-" * width + "\n"
 
         receipt_text_content += f"{current_time:^{width}}\n"
@@ -2988,6 +3505,8 @@ class POSMainWindow(QMainWindow):
         self.listbox.clear()
         self.update_total()
         self.clear_product_display()
+        self.applied_freebies = []
+        self.applied_freebie_messages = []
 
     def set_discount(self):
         disc, ok = QInputDialog.getDouble(self, "Apply Discount", "Enter discount percentage (0-100):", min=0, max=100)
@@ -3560,6 +4079,9 @@ def main():
         sys.exit()
 
     if not load_bundle_promos():
+        sys.exit()
+
+    if not load_basket_promos():
         sys.exit()
 
     rebuild_product_variant_lookup()

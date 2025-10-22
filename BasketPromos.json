@@ -1,0 +1,17 @@
+{
+    "tiers": [
+        {
+            "code": "BASKET500",
+            "name": "Basket P500 Reward",
+            "threshold": 500.0,
+            "message": "Thank you for your purchase! Enjoy your freebie.",
+            "freebies": [
+                {
+                    "barcode": "EB-B",
+                    "variant_index": 0,
+                    "quantity": 1
+                }
+            ]
+        }
+    ]
+}

@@ -16,9 +16,9 @@ Stock No.,name,price,stock,image_filename,B1T1,B3T1
 510,Lunch Box,80.0,999,,,
 517,Salad Lunch Box,55.0,999,,,
 982-M,Tumbler - Medium,70.0,999,,,
-339-1,Airtight Canister,100.0,999,,,
-339-2,Airtight Canister,120.0,999,,,
-339-3,Airtight Canister,140.0,999,,,
+339-1,Airtight Canister,100.0,998,,,
+339-2,Airtight Canister,120.0,998,,,
+339-3,Airtight Canister,140.0,998,,,
 339-4,Airtight Canister,175.0,999,,,
 811,1.1L Urban Gourmet,80.0,999,,,
 812,2.25L Urban Gourmet,90.0,999,,,
@@ -31,8 +31,8 @@ Stock No.,name,price,stock,image_filename,B1T1,B3T1
 843,1.5 L Urban Gourmet,75.0,999,,,
 851,1.1 L Urban Gourmet,60.0,999,,,
 852,2.3 L Urban Gourmet,85.0,999,,,
-9848-S,11L Juice Dispenser with FREE Ladle,515.0,999,,,1545.0
-9868-S,22 L Double Quencher Dispenser,980.0,999,,,2940.0
+9848-S,11L Juice Dispenser with FREE Ladle,515.0,995,,,1545.0
+9868-S,22 L Double Quencher Dispenser,980.0,995,,,2940.0
 2506,Pitcher (with twist lock feature),115.0,999,,,
 9616,Square Plate (Small) - 4pcs per set,130.0,999,,,
 9626,Square Plate (BIg) - 4pcs per set,155.0,999,,,
@@ -74,4 +74,4 @@ ST-PT-SET-55,Stainless Steel Spoon & Fork w/ 909 Traveller's Case,260.0,999,,,78
 9718-mocha,Chair with Armrest,500.0,999,,,
 9718-brown,Chair with Armrest,500.0,999,,,
 EB-S,Ecobag small,10.0,999,,,
-EB-B,Ecobag Big,15.0,999,,,
+EB-B,Ecobag Big,15.0,998,,,
