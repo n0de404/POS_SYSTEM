@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, Q
                              QListWidget, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
                              QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView)
-from PyQt6.QtGui import QColor, QPixmap, QAction, QIcon, QFont
+from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette
 from PyQt6.QtCore import Qt, QSize, QStringListModel
 
 # --- Global Variables ---
@@ -45,6 +45,8 @@ product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup dat
 promo_inventory_map = {}  # Maps promo code to the number of base units consumed per sale
 product_promo_columns = []  # Tracks additional promo pricing columns detected in the products CSV
 bundle_promos = {}  # Stores bundle promos with their component details
+current_theme_preference = "system"
+current_theme_effective = "light"
 
 users_data = {}  # Stores usernames and their passwords: {username: password}
 current_user_name = None  # Stores the username of the currently logged-in user
@@ -62,6 +64,7 @@ RECEIPTS_ARCHIVE_FILE = "receipts_archive.json"
 TENDERED_AMOUNTS_FILE = "tendered_amounts.json"
 PROMO_INVENTORY_FILE = "PromoInventory.csv"
 PROMO_BUNDLES_FILE = "PromoBundles.json"
+UI_PREFERENCES_FILE = "ui_preferences.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
 
@@ -176,6 +179,124 @@ def _draw_bold_text(canvas_obj, x_pos, y_pos, text, font_name, font_size, offset
     canvas_obj.drawString(x_pos, y_pos, text)
     if offset_pt > 0:
         canvas_obj.drawString(x_pos + offset_pt, y_pos, text)
+
+
+def load_ui_preferences():
+    """Loads UI preferences such as theme selection from disk."""
+    global current_theme_preference
+    try:
+        with open(UI_PREFERENCES_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            theme = data.get("theme", "system")
+            current_theme_preference = theme
+            return theme
+    except FileNotFoundError:
+        return "system"
+    except Exception as exc:
+        print(f"Warning: failed to load UI preferences: {exc}")
+        return "system"
+
+
+def save_ui_preferences(theme):
+    """Persists UI preferences such as theme selection to disk."""
+    try:
+        with open(UI_PREFERENCES_FILE, 'w', encoding='utf-8') as f:
+            json.dump({"theme": theme}, f, ensure_ascii=False, indent=4)
+    except Exception as exc:
+        print(f"Warning: failed to save UI preferences: {exc}")
+
+
+def detect_system_theme():
+    """Returns 'light' or 'dark' based on the OS-level color scheme when available."""
+    app = QApplication.instance()
+    if not app:
+        return "light"
+    hints = app.styleHints()
+    if hasattr(hints, "colorScheme"):
+        scheme = hints.colorScheme()
+        if scheme == Qt.ColorScheme.Dark:
+            return "dark"
+        if scheme == Qt.ColorScheme.Light:
+            return "light"
+    return "light"
+
+
+def apply_light_theme(app):
+    """Applies a light color palette and resets any global stylesheet overrides."""
+    if app is None:
+        return
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#111827"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f3f4f6"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#111827"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#111827"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#2563eb"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#111827"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#f9fafb"))
+    app.setPalette(palette)
+    app.setStyleSheet("")
+
+
+def apply_dark_theme(app):
+    """Applies a dark color palette alongside a high-contrast global stylesheet."""
+    if app is None:
+        return
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#0f172a"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#111827"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#2563eb"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#0f172a"))
+    app.setPalette(palette)
+    app.setStyleSheet("""
+        QWidget { background-color: #0f172a; color: #f8fafc; }
+        QPushButton { background-color: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+        QPushButton:hover { background-color: #2563eb; color: #ffffff; }
+        QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QListWidget, QTableWidget, QTableView {
+            background-color: #111827;
+            color: #f8fafc;
+            border: 1px solid #334155;
+            selection-background-color: #2563eb;
+            selection-color: #f8fafc;
+        }
+        QHeaderView::section {
+            background-color: #1e293b;
+            color: #f8fafc;
+        }
+    """)
+
+
+def apply_theme(app, mode):
+    """
+    Applies the requested theme ('light', 'dark', or 'system') to the given QApplication.
+    Returns the effective theme that was applied.
+    """
+    global current_theme_preference, current_theme_effective
+    if not mode:
+        mode = "system"
+    current_theme_preference = mode
+    effective = mode
+    if mode == "system":
+        effective = detect_system_theme()
+    if effective == "dark":
+        apply_dark_theme(app)
+    else:
+        effective = "light"
+        apply_light_theme(app)
+    current_theme_effective = effective
+    return effective
 
 
 def render_receipt_text(canvas_obj, receipt_text, layout, start_x, start_y):
@@ -1783,6 +1904,10 @@ class POSMainWindow(QMainWindow):
         self.current_discount = current_discount
         self.products = products  # Make sure this is accessibl
         self.sales_summary = sales_summary  # Make sure this is accessible
+        self.current_theme_mode = current_theme_preference
+        self.current_effective_theme = current_theme_effective
+        self.theme_actions = {}
+        self.theme_action_group = None
 
         self.init_ui()
         self.showMaximized()
@@ -1837,8 +1962,7 @@ class POSMainWindow(QMainWindow):
         # Removed setFixedHeight for responsiveness
         self.listbox.setFont(QFont("Arial", 20))
         self.listbox.setFixedHeight(600)  # Set to any pixel height
-
-        self.listbox.setStyleSheet("background-color: white; border: 1px solid #CCC;") # Added styling
+        self.apply_listbox_style(self.current_effective_theme)
         pos_layout.addWidget(self.listbox)
 
         # Total label
@@ -1898,6 +2022,7 @@ class POSMainWindow(QMainWindow):
         info_group.setStyleSheet("QGroupBox { border: 1px solid #CCC; border-radius: 8px; background-color: white; }") # Added styling
         info_layout = QVBoxLayout()
         info_group.setLayout(info_layout) # Set layout for the group box
+        self.info_group = info_group
 
         # Product Image Section
         lbl_image_title = QLabel("PRODUCT INFORMATION")
@@ -2032,6 +2157,7 @@ class POSMainWindow(QMainWindow):
 
         # Menu bar with Archive menu
         menubar = self.menuBar()
+        self.setup_theme_menu(menubar)
         archive_menu = menubar.addMenu("Archive")
         view_archive_action = QAction("View Archived Receipts", self)
         view_archive_action.triggered.connect(self.show_archive_labels)
@@ -2042,6 +2168,7 @@ class POSMainWindow(QMainWindow):
         # Add this in POSMainWindow.__init__ or __init_ui__ after creating self.listbox:    
         self.listbox.setSelectionMode(QListWidget.SelectionMode.SingleSelection)  # Only single item selection allowed
         self.listbox.currentRowChanged.connect(self.display_selected_cart_item)
+        self.apply_theme_styles(self.current_effective_theme)
 
     def display_selected_cart_item(self, current_row):
         """
@@ -2104,22 +2231,7 @@ class POSMainWindow(QMainWindow):
         self.entry_product_search.setFixedWidth(1200)
         self.entry_product_search.setFont(QFont("Segoe UI", 20))
         self.entry_product_search.lineEdit().setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.entry_product_search.setStyleSheet("""
-            QComboBox {
-                background-color: #ffffff;
-                border: 1px solid #d1d5db;
-                padding: 6px 12px;
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                font-size: 20px;
-                color: #374151;
-            }
-            QComboBox QAbstractItemView {
-                border: 1px solid #d1d5db;
-                selection-background-color: #e5e7eb;
-                background-color: #ffffff;
-                font-size: 20px;
-            }
-        """)
+        self.apply_combobox_style(self.current_effective_theme)
 
         # Store full product list as display strings: "Product Name (barcode)"
         self._product_search_list = [
@@ -2173,6 +2285,132 @@ class POSMainWindow(QMainWindow):
         self.entry_product_search.setCurrentText(current_text)
         self.entry_product_search.blockSignals(False)
         self._completer_model.setStringList(self._product_search_list)
+        self.apply_combobox_style(self.current_effective_theme)
+
+    def setup_theme_menu(self, menubar):
+        """Create theme selection actions under a View menu."""
+        view_menu = menubar.addMenu("View")
+        self.theme_actions = {}
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.setExclusive(True)
+        options = [
+            ("light", "Light Mode"),
+            ("dark", "Dark Mode"),
+            ("system", "Follow System Theme"),
+        ]
+        for mode, label in options:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, m=mode: self.set_theme_mode(m))
+            self.theme_action_group.addAction(action)
+            view_menu.addAction(action)
+            self.theme_actions[mode] = action
+        self.sync_theme_actions()
+
+    def sync_theme_actions(self):
+        """Ensure the checked menu action reflects the current theme preference."""
+        for mode, action in self.theme_actions.items():
+            action.blockSignals(True)
+            action.setChecked(mode == self.current_theme_mode)
+            action.blockSignals(False)
+
+    def set_theme_mode(self, mode):
+        """Apply the requested theme, persist it, and update UI styling."""
+        app = QApplication.instance()
+        if app is None:
+            return
+        applied = apply_theme(app, mode)
+        save_ui_preferences(mode)
+        self.current_theme_mode = mode
+        self.current_effective_theme = applied
+        self.apply_theme_styles(applied)
+        self.sync_theme_actions()
+
+    def apply_theme_styles(self, effective_theme):
+        """Refresh widget-level styling to match the current theme."""
+        self.apply_combobox_style(effective_theme)
+        self.apply_listbox_style(effective_theme)
+        if hasattr(self, "info_group") and self.info_group is not None:
+            if effective_theme == "dark":
+                self.info_group.setStyleSheet(
+                    "QGroupBox { border: 1px solid #334155; border-radius: 8px; background-color: #111827; }"
+                )
+            else:
+                self.info_group.setStyleSheet(
+                    "QGroupBox { border: 1px solid #d1d5db; border-radius: 8px; background-color: #ffffff; }"
+                )
+        if self.label_product_image is not None:
+            if effective_theme == "dark":
+                self.label_product_image.setStyleSheet("border: 1px solid #334155; background-color: #0f172a;")
+            else:
+                self.label_product_image.setStyleSheet("border: 1px solid black; background-color: white;")
+
+    def apply_combobox_style(self, theme):
+        """Apply theme-aware styling to the product search dropdown."""
+        if not hasattr(self, "entry_product_search") or self.entry_product_search is None:
+            return
+        if theme == "dark":
+            stylesheet = """
+                QComboBox {
+                    background-color: #1f2937;
+                    border: 1px solid #374151;
+                    padding: 6px 12px;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    font-size: 20px;
+                    color: #f3f4f6;
+                }
+                QComboBox QAbstractItemView {
+                    border: 1px solid #374151;
+                    selection-background-color: #2563eb;
+                    background-color: #111827;
+                    color: #f3f4f6;
+                    font-size: 20px;
+                }
+            """
+        else:
+            stylesheet = """
+                QComboBox {
+                    background-color: #ffffff;
+                    border: 1px solid #d1d5db;
+                    padding: 6px 12px;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    font-size: 20px;
+                    color: #374151;
+                }
+                QComboBox QAbstractItemView {
+                    border: 1px solid #d1d5db;
+                    selection-background-color: #2563eb;
+                    color: #111827;
+                    background-color: #ffffff;
+                    font-size: 20px;
+                }
+            """
+        self.entry_product_search.setStyleSheet(stylesheet)
+
+    def apply_listbox_style(self, theme):
+        """Apply theme-aware styling to the cart list widget."""
+        if not hasattr(self, "listbox") or self.listbox is None:
+            return
+        if theme == "dark":
+            self.listbox.setStyleSheet("""
+                QListWidget {
+                    background-color: #0f172a;
+                    border: 1px solid #334155;
+                    color: #f8fafc;
+                    selection-background-color: #2563eb;
+                    selection-color: #f8fafc;
+                }
+            """)
+        else:
+            self.listbox.setStyleSheet("""
+                QListWidget {
+                    background-color: #ffffff;
+                    border: 1px solid #d1d5db;
+                    color: #111827;
+                    selection-background-color: #2563eb;
+                    selection-color: #ffffff;
+                }
+            """)
 
     def on_product_search_selected(self, selected_text):
         # Parse barcode from selected_text, update product info display and barcode entry
@@ -3309,6 +3547,8 @@ def print_receipt_pdf(receipt_text, parent=None):
 
 def main():
     app = QApplication(sys.argv)
+    preferred_theme = load_ui_preferences()
+    apply_theme(app, preferred_theme)
     # Ensure image folder exists
     os.makedirs(PRODUCT_IMAGE_FOLDER, exist_ok=True)
 
