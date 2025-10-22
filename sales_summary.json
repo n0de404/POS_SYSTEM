@@ -1,6 +1,10 @@
 {
     "110": {
-        "qty_sold": 61,
-        "revenue": 57340.0
+        "qty_sold": 74,
+        "revenue": 69540.0
+    },
+    "9716- Brown": {
+        "qty_sold": 4,
+        "revenue": 2890.0
     }
 }

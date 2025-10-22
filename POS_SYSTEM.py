@@ -3,9 +3,11 @@ import os
 import re
 import csv
 from datetime import datetime
+from functools import partial
 import tempfile
 import subprocess
 import json  # Import the json module
+from copy import deepcopy
 import pandas as pd
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.pdfgen import canvas
@@ -22,7 +24,8 @@ from PIL import Image, ImageQt
 
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
                              QListWidget, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
-                             QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame)
+                             QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
+                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView)
 from PyQt6.QtGui import QColor, QPixmap, QAction, QIcon, QFont
 from PyQt6.QtCore import Qt, QSize, QStringListModel
 
@@ -41,6 +44,7 @@ sales_summary = {}  # Stores sales data for reporting: {barcode: {"qty_sold": ..
 product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
 promo_inventory_map = {}  # Maps promo code to the number of base units consumed per sale
 product_promo_columns = []  # Tracks additional promo pricing columns detected in the products CSV
+bundle_promos = {}  # Stores bundle promos with their component details
 
 users_data = {}  # Stores usernames and their passwords: {username: password}
 current_user_name = None  # Stores the username of the currently logged-in user
@@ -57,6 +61,7 @@ SALES_SUMMARY_FILE = "sales_summary.json"
 RECEIPTS_ARCHIVE_FILE = "receipts_archive.json"
 TENDERED_AMOUNTS_FILE = "tendered_amounts.json"
 PROMO_INVENTORY_FILE = "PromoInventory.csv"
+PROMO_BUNDLES_FILE = "PromoBundles.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
 
@@ -379,6 +384,66 @@ def load_promo_inventory(parent=None):
     return True
 
 
+def load_bundle_promos(parent=None):
+    """
+    Loads saved bundle promo definitions that map a bundle code to component products and price.
+    """
+    global bundle_promos
+    bundle_promos = {}
+
+    if not os.path.exists(PROMO_BUNDLES_FILE):
+        return True
+
+    try:
+        with open(PROMO_BUNDLES_FILE, mode='r', encoding='utf-8') as file:
+            data = json.load(file)
+            if isinstance(data, dict):
+                bundle_promos = data
+            elif isinstance(data, list):
+                # Support legacy list format by converting to dict
+                for entry in data:
+                    code = entry.get("code")
+                    if not code:
+                        continue
+                    bundle_promos[code] = entry
+            else:
+                bundle_promos = {}
+    except Exception as exc:
+        show_error("Error", f"Failed to load bundle promos: {exc}", parent)
+        return False
+
+    return True
+
+
+def save_bundle_promos(parent=None):
+    """
+    Persists bundle promo definitions to disk.
+    """
+    try:
+        with open(PROMO_BUNDLES_FILE, mode='w', encoding='utf-8') as file:
+            json.dump(bundle_promos, file, indent=2)
+    except Exception as exc:
+        show_error("Save Error", f"Failed to save bundle promos: {exc}", parent)
+
+
+def save_promo_inventory(parent=None):
+    """
+    Persists the promo inventory mapping to disk so units per sale stay in sync with promo pricing.
+    """
+    try:
+        with open(PROMO_INVENTORY_FILE, mode='w', newline='', encoding='utf-8') as file:
+            fieldnames = ['promo_code', 'units_per_sale']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            for promo_code in sorted(promo_inventory_map.keys()):
+                writer.writerow({
+                    'promo_code': promo_code,
+                    'units_per_sale': promo_inventory_map[promo_code]
+                })
+    except Exception as e:
+        show_error("Save Error", f"Failed to save promo inventory: {e}", parent)
+
+
 def rebuild_product_variant_lookup():
     """
     Builds a flat lookup mapping SKU codes (including promo variants) to their base product information.
@@ -418,6 +483,62 @@ def rebuild_product_variant_lookup():
                     "inventory_usage": inventory_usage,
                     "image_filename": variant.get('image_filename', '')
                 }
+
+
+    for bundle_code, bundle in bundle_promos.items():
+        components = bundle.get("components") or []
+        resolved_components = []
+        for component in components:
+            barcode = component.get("barcode")
+            variant_index = component.get("variant_index", 0)
+            quantity = component.get("quantity", 1)
+            if not barcode or quantity <= 0:
+                continue
+
+            variants = products.get(barcode, [])
+            if not variants:
+                print(f"Warning: bundle '{bundle_code}' references missing product '{barcode}'.")
+                continue
+
+            if variant_index >= len(variants):
+                print(f"Warning: bundle '{bundle_code}' references invalid variant index for '{barcode}'. Using first variant.")
+                variant_index = 0
+
+            variant = variants[variant_index]
+            resolved_components.append({
+                "barcode": barcode,
+                "variant_index": variant_index,
+                "quantity": quantity,
+                "name": variant.get("name", barcode),
+                "base_price": float(variant.get("price", 0))
+            })
+
+        if not resolved_components:
+            continue
+
+        sku = bundle.get("sku") or f"BUNDLE_{bundle_code}"
+        bundle_name = bundle.get("name") or f"Bundle {bundle_code}"
+        bundle_price = float(bundle.get("price", 0))
+        image_filename = bundle.get("image_filename", "")
+
+        display_components = [
+            f"{comp['quantity']} x {comp['name']} ({comp['barcode']})"
+            for comp in resolved_components
+        ]
+
+        product_variant_lookup[sku] = {
+            "sku": sku,
+            "base_barcode": None,
+            "variant_index": None,
+            "promo_code": bundle_code,
+            "bundle_code": bundle_code,
+            "price": bundle_price,
+            "name": bundle_name,
+            "inventory_usage": None,
+            "image_filename": image_filename,
+            "bundle_components": resolved_components,
+            "display_components": display_components
+        }
 
 
 def save_products_to_csv(parent=None):
@@ -583,43 +704,41 @@ def save_receipts_archive():
         print(f"Error saving receipts archive: {e}")
         
 def load_inventory_summary():
-    """Loads the inventory summary from a CSV file."""
-    global products, sales_summary
+    """
+    Loads the inventory summary from a CSV file without overriding the authoritative
+    product data that was loaded from POSProducts.csv.
+    """
+    global sales_summary
+    sales_summary = sales_summary or {}
+
     try:
         with open(INVENTORY_SUMMARY_FILE, mode='r', newline='', encoding='utf-8') as file:
             reader = csv.DictReader(file)
             for row in reader:
                 barcode = row['Stock No.'].strip()
-                name = row['name'].strip()
-                price = float(row['price'])
-                stock = int(row['stock'])
-                original_stock = int(row['original_stock'])
-                qty_sold = int(row['qty_sold'])
-                revenue = float(row['revenue'])
+                qty_sold = int(row.get('qty_sold', 0) or 0)
+                revenue = float(row.get('revenue', 0) or 0)
 
                 if barcode in products:
-                    # Product exists, update the first variant (assuming name is consistent)
-                    products[barcode][0]["stock"] = stock
-                    products[barcode][0]["original_stock"] = original_stock
+                    variant = products[barcode][0]
+                    original_stock_value = row.get('original_stock')
+                    if original_stock_value is not None:
+                        try:
+                            variant['original_stock'] = int(original_stock_value)
+                        except ValueError:
+                            pass
                 else:
-                    # Product doesn't exist, create a new entry
-                    products[barcode] = [{
-                        "name": name,
-                        "price": price,
-                        "stock": stock,
-                        "original_stock": original_stock,
-                        "image_filename": "",  # You might want to load the image filename from somewhere
-                        "promos": {}
-                    }]
+                    print(f"Warning: inventory summary references missing product '{barcode}'. Skipping stock restore.")
 
-                sales_summary[barcode] = {"qty_sold": qty_sold, "revenue": revenue}
+                sales_summary[barcode] = {
+                    "qty_sold": qty_sold,
+                    "revenue": revenue
+                }
         print("Inventory summary loaded successfully.")
     except FileNotFoundError:
         print("Inventory summary file not found. Starting with empty data.")
     except Exception as e:
         print(f"Error loading inventory summary: {e}")
-    finally:
-        rebuild_product_variant_lookup()
 
 
 def load_sales_summary():
@@ -945,6 +1064,14 @@ class InventoryManagementDialog(QDialog):
         self.btn_export.clicked.connect(self.export_summary)
         btn_layout.addWidget(self.btn_export)
 
+        self.btn_manage_promos = QPushButton("Manage Promos")
+        self.btn_manage_promos.clicked.connect(self.manage_promos)
+        btn_layout.addWidget(self.btn_manage_promos)
+
+        self.btn_manage_bundles = QPushButton("Manage Bundles")
+        self.btn_manage_bundles.clicked.connect(self.manage_bundles)
+        btn_layout.addWidget(self.btn_manage_bundles)
+
         self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.close)
         btn_layout.addWidget(self.btn_close)
@@ -952,6 +1079,22 @@ class InventoryManagementDialog(QDialog):
         layout.addLayout(btn_layout)
 
         self.populate_table()
+
+    def manage_promos(self):
+        dlg = PromoManagementDialog(self.products, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Table content may not change, but refresh to reflect any potential data updates.
+            self.populate_table()
+            parent = self.parent()
+            if parent and hasattr(parent, "refresh_product_search_options"):
+                parent.refresh_product_search_options()
+
+    def manage_bundles(self):
+        dlg = BundlePromoDialog(self.products, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            parent = self.parent()
+            if parent and hasattr(parent, "refresh_product_search_options"):
+                parent.refresh_product_search_options()
 
     def replenish_stock(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Replenish Stock from Excel", "", "Excel Files (*.xlsx *.xls)")
@@ -1079,6 +1222,544 @@ class InventoryManagementDialog(QDialog):
                 show_error("Export Error", f"Failed to export summary: {e}", self)
 
 
+
+
+class PromoManagementDialog(QDialog):
+    def __init__(self, products_ref, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Promo Management")
+        self.resize(900, 600)
+        self.products = products_ref
+        self.row_widgets = []
+
+        main_layout = QVBoxLayout(self)
+
+        info_label = QLabel("Create or update promos, assign them to products, and set unit usage in one place.")
+        info_label.setWordWrap(True)
+        main_layout.addWidget(info_label)
+
+        form_layout = QGridLayout()
+        main_layout.addLayout(form_layout)
+
+        lbl_code = QLabel("Promo Code:")
+        form_layout.addWidget(lbl_code, 0, 0)
+
+        self.promo_code_combo = QComboBox()
+        self.promo_code_combo.setEditable(True)
+        self.promo_code_combo.lineEdit().setPlaceholderText("e.g., B3T1")
+        existing_codes = sorted({code for code in product_promo_columns if code} | {code for code in promo_inventory_map if code})
+        for code in existing_codes:
+            self.promo_code_combo.addItem(code)
+        form_layout.addWidget(self.promo_code_combo, 0, 1)
+
+        self.btn_new_promo = QPushButton("New Promo")
+        self.btn_new_promo.clicked.connect(self.clear_form)
+        form_layout.addWidget(self.btn_new_promo, 0, 2)
+
+        lbl_units = QLabel("Units Per Sale:")
+        form_layout.addWidget(lbl_units, 1, 0)
+
+        self.units_spin = QSpinBox()
+        self.units_spin.setRange(1, 10000)
+        form_layout.addWidget(self.units_spin, 1, 1)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Include", "Stock No.", "Product Name", "Base Price", "Promo Price"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        main_layout.addWidget(self.table)
+
+        self.product_rows = []
+        for barcode in sorted(self.products.keys()):
+            variants = self.products[barcode]
+            for index, variant in enumerate(variants):
+                self.product_rows.append((barcode, index, variant))
+
+        self.table.setRowCount(len(self.product_rows))
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnWidth(0, 80)
+
+        for row, (barcode, index, variant) in enumerate(self.product_rows):
+            checkbox = QCheckBox()
+            checkbox.setToolTip("Toggle to include this product in the promo.")
+            checkbox.setStyleSheet("margin-left: 25px; margin-right: 25px;")
+            self.table.setCellWidget(row, 0, checkbox)
+
+            stock_item = QTableWidgetItem(barcode)
+            stock_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 1, stock_item)
+
+            name = variant.get('name', '')
+            if len(self.products.get(barcode, [])) > 1:
+                name = f"{name} (Variant {index + 1})"
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 2, name_item)
+
+            base_price = float(variant.get('price', 0))
+            base_item = QTableWidgetItem(f"{base_price:.2f}")
+            base_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            base_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 3, base_item)
+
+            price_spin = QDoubleSpinBox()
+            price_spin.setDecimals(2)
+            price_spin.setRange(0.0, 9999999.99)
+            price_spin.setSingleStep(1.0)
+            price_spin.setValue(base_price)
+            price_spin.setEnabled(False)
+            price_spin.setProperty("promo_custom", False)
+            self.table.setCellWidget(row, 4, price_spin)
+
+            checkbox.toggled.connect(partial(self.handle_checkbox_toggled, price_spin, base_price))
+            price_spin.valueChanged.connect(partial(self.mark_price_custom, price_spin))
+            self.row_widgets.append((barcode, index, checkbox, price_spin, base_price))
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.handle_save)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self.promo_code_combo.currentTextChanged.connect(self.load_promo_data)
+        self.units_spin.valueChanged.connect(self.handle_units_changed)
+        self.load_promo_data(self.promo_code_combo.currentText())
+
+    def clear_form(self):
+        self.promo_code_combo.blockSignals(True)
+        self.promo_code_combo.setCurrentIndex(-1)
+        self.promo_code_combo.setEditText("")
+        self.promo_code_combo.blockSignals(False)
+        self.units_spin.blockSignals(True)
+        self.units_spin.setValue(1)
+        self.units_spin.blockSignals(False)
+        self.load_promo_data("")
+        self.promo_code_combo.lineEdit().setFocus()
+
+    def compute_default_promo_price(self, base_price):
+        units = max(1, self.units_spin.value())
+        if units <= 1:
+            return round(base_price, 2)
+        return round(base_price * max(1, units - 1), 2)
+
+    def handle_checkbox_toggled(self, price_spin, base_price, checked):
+        price_spin.setEnabled(checked)
+        if checked:
+            auto_price = self.compute_default_promo_price(base_price)
+            price_spin.blockSignals(True)
+            price_spin.setValue(auto_price)
+            price_spin.blockSignals(False)
+            price_spin.setProperty("promo_custom", False)
+        else:
+            price_spin.blockSignals(True)
+            price_spin.setValue(base_price)
+            price_spin.blockSignals(False)
+            price_spin.setProperty("promo_custom", False)
+
+    def handle_units_changed(self, _value):
+        for _, _, checkbox, price_spin, base_price in self.row_widgets:
+            if checkbox.isChecked() and not price_spin.property("promo_custom"):
+                auto_price = self.compute_default_promo_price(base_price)
+                price_spin.blockSignals(True)
+                price_spin.setValue(auto_price)
+                price_spin.blockSignals(False)
+
+    def mark_price_custom(self, price_spin, _value):
+        if price_spin.isEnabled() and price_spin.hasFocus():
+            price_spin.setProperty("promo_custom", True)
+
+    def load_promo_data(self, promo_code):
+        promo_code = (promo_code or "").strip()
+
+        units_value = promo_inventory_map.get(promo_code, 1)
+        try:
+            units_value = int(units_value)
+        except (ValueError, TypeError):
+            units_value = 1
+        target_units = max(1, units_value)
+        self.units_spin.blockSignals(True)
+        self.units_spin.setValue(target_units)
+        self.units_spin.blockSignals(False)
+
+        for barcode, index, checkbox, price_spin, base_price in self.row_widgets:
+            variant = self.products.get(barcode, [])[index]
+            existing_price = None
+            promos = variant.get('promos') or {}
+            if promo_code:
+                existing_price = promos.get(promo_code)
+            price_spin.blockSignals(True)
+            price_spin.setValue(float(base_price))
+            price_spin.blockSignals(False)
+            price_spin.setProperty("promo_custom", False)
+
+            checkbox.blockSignals(True)
+            checkbox.setChecked(False)
+            checkbox.blockSignals(False)
+
+            price_spin.setEnabled(False)
+
+            if existing_price not in (None, "") and promo_code:
+                try:
+                    price_val = float(existing_price)
+                except (TypeError, ValueError):
+                    price_val = self.compute_default_promo_price(base_price)
+                price_spin.blockSignals(True)
+                price_spin.setValue(price_val)
+                price_spin.blockSignals(False)
+                checkbox.blockSignals(True)
+                checkbox.setChecked(True)
+                checkbox.blockSignals(False)
+                price_spin.setEnabled(True)
+                auto_price = self.compute_default_promo_price(base_price)
+                if abs(price_val - auto_price) >= 0.01:
+                    price_spin.setProperty("promo_custom", True)
+
+    def handle_save(self):
+        promo_code = self.promo_code_combo.currentText().strip()
+        if not promo_code:
+            show_error("Validation Error", "Please enter a promo code before saving.", self)
+            return
+        if not re.fullmatch(r"[A-Za-z0-9_\\-]+", promo_code):
+            show_error("Validation Error", "Promo code can only contain letters, numbers, underscores, and hyphens.", self)
+            return
+
+        promo_code = promo_code.upper()
+        self.promo_code_combo.setEditText(promo_code)
+
+        units_per_sale = self.units_spin.value()
+
+        selected_entries = {}
+        for barcode, index, checkbox, price_spin, _ in self.row_widgets:
+            if checkbox.isChecked():
+                price = float(price_spin.value())
+                if price <= 0:
+                    show_error("Validation Error", f"Promo price must be greater than zero for product '{barcode}'.", self)
+                    return
+                selected_entries[(barcode, index)] = round(price, 2)
+
+        if not selected_entries:
+            show_error("Validation Error", "Select at least one product to apply the promo.", self)
+            return
+
+        global product_promo_columns, promo_inventory_map
+
+        if promo_code not in product_promo_columns:
+            product_promo_columns.append(promo_code)
+
+        promo_inventory_map[promo_code] = units_per_sale
+
+        for barcode, variants in self.products.items():
+            for idx, variant in enumerate(variants):
+                promos = variant.setdefault('promos', {})
+                key = (barcode, idx)
+                if key in selected_entries:
+                    promos[promo_code] = selected_entries[key]
+                else:
+                    promos.pop(promo_code, None)
+
+        save_products_to_csv(self)
+        save_promo_inventory(self)
+        rebuild_product_variant_lookup()
+
+        if promo_code not in {self.promo_code_combo.itemText(i) for i in range(self.promo_code_combo.count())}:
+            self.promo_code_combo.addItem(promo_code)
+
+        show_info("Promo Saved", f"Promo '{promo_code}' has been saved successfully.", self)
+        self.accept()
+
+
+class BundlePromoDialog(QDialog):
+    def __init__(self, products_ref, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Bundle Promotions")
+        self.resize(950, 620)
+        self.products = products_ref
+        self.row_widgets = []
+
+        main_layout = QVBoxLayout(self)
+
+        info_label = QLabel(
+            "Create bundles that sell multiple products at a single promo price. "
+            "Adjust quantities per item and set the bundle price; stock updates will deduct from each component."
+        )
+        info_label.setWordWrap(True)
+        main_layout.addWidget(info_label)
+
+        header_layout = QGridLayout()
+        main_layout.addLayout(header_layout)
+
+        header_layout.addWidget(QLabel("Bundle Code:"), 0, 0)
+        self.bundle_code_combo = QComboBox()
+        self.bundle_code_combo.setEditable(True)
+        self.bundle_code_combo.lineEdit().setPlaceholderText("e.g., WKND_SET")
+        for code in sorted(bundle_promos.keys()):
+            self.bundle_code_combo.addItem(code)
+        header_layout.addWidget(self.bundle_code_combo, 0, 1)
+
+        self.btn_new_bundle = QPushButton("New Bundle")
+        self.btn_new_bundle.clicked.connect(self.clear_form)
+        header_layout.addWidget(self.btn_new_bundle, 0, 2)
+
+        self.btn_delete_bundle = QPushButton("Delete Bundle")
+        self.btn_delete_bundle.clicked.connect(self.delete_bundle)
+        header_layout.addWidget(self.btn_delete_bundle, 0, 3)
+
+        header_layout.addWidget(QLabel("Bundle Name:"), 1, 0)
+        self.bundle_name_edit = QLineEdit()
+        self.bundle_name_edit.setPlaceholderText("Display name shown in POS (optional)")
+        header_layout.addWidget(self.bundle_name_edit, 1, 1, 1, 3)
+
+        header_layout.addWidget(QLabel("Bundle Price:"), 2, 0)
+        self.bundle_price_spin = QDoubleSpinBox()
+        self.bundle_price_spin.setDecimals(2)
+        self.bundle_price_spin.setRange(0.0, 9999999.99)
+        self.bundle_price_spin.setSingleStep(1.0)
+        self.bundle_price_spin.setProperty("custom_edit", False)
+        self.bundle_price_spin.valueChanged.connect(self.mark_bundle_price_custom)
+        header_layout.addWidget(self.bundle_price_spin, 2, 1)
+
+        self.bundle_base_total_label = QLabel("Base total: P0.00")
+        header_layout.addWidget(self.bundle_base_total_label, 2, 2, 1, 2)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Qty", "Stock No.", "Product Name", "Base Price", "Total"])
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        main_layout.addWidget(self.table)
+
+        self.product_rows = []
+        for barcode in sorted(self.products.keys()):
+            variants = self.products[barcode]
+            for index, variant in enumerate(variants):
+                self.product_rows.append((barcode, index, variant))
+
+        self.table.setRowCount(len(self.product_rows))
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+
+        for row, (barcode, index, variant) in enumerate(self.product_rows):
+            qty_spin = QSpinBox()
+            qty_spin.setRange(0, 999)
+            qty_spin.valueChanged.connect(partial(self.handle_quantity_changed, row))
+            self.table.setCellWidget(row, 0, qty_spin)
+
+            stock_item = QTableWidgetItem(barcode)
+            stock_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 1, stock_item)
+
+            name = variant.get('name', '')
+            if len(self.products.get(barcode, [])) > 1:
+                name = f"{name} (Variant {index + 1})"
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 2, name_item)
+
+            base_price = float(variant.get('price', 0))
+            base_item = QTableWidgetItem(f"{base_price:.2f}")
+            base_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            base_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 3, base_item)
+
+            total_item = QTableWidgetItem("0.00")
+            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            total_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 4, total_item)
+
+            self.row_widgets.append({
+                "row": row,
+                "barcode": barcode,
+                "variant_index": index,
+                "qty_spin": qty_spin,
+                "base_price": base_price
+            })
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.handle_save)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self.bundle_code_combo.currentTextChanged.connect(self.load_bundle_data)
+        self.load_bundle_data(self.bundle_code_combo.currentText())
+
+    def clear_form(self):
+        self.bundle_code_combo.blockSignals(True)
+        self.bundle_code_combo.setCurrentIndex(-1)
+        self.bundle_code_combo.setEditText("")
+        self.bundle_code_combo.blockSignals(False)
+        self.bundle_name_edit.clear()
+        self.bundle_price_spin.blockSignals(True)
+        self.bundle_price_spin.setValue(0.0)
+        self.bundle_price_spin.blockSignals(False)
+        self.bundle_price_spin.setProperty("custom_edit", False)
+        for row_info in self.row_widgets:
+            row_info["qty_spin"].blockSignals(True)
+            row_info["qty_spin"].setValue(0)
+            row_info["qty_spin"].blockSignals(False)
+            self.table.item(row_info["row"], 4).setText("0.00")
+            self.set_row_highlight(row_info["row"], False)
+        self.update_base_total()
+        self.bundle_code_combo.lineEdit().setFocus()
+
+    def handle_quantity_changed(self, row_index, value):
+        row_info = self.row_widgets[row_index]
+        total_value = value * row_info["base_price"]
+        self.table.item(row_index, 4).setText(f"{total_value:.2f}")
+        self.set_row_highlight(row_index, value > 0)
+        base_total = self.update_base_total()
+        if not self.bundle_price_spin.property("custom_edit"):
+            self.bundle_price_spin.blockSignals(True)
+            self.bundle_price_spin.setValue(base_total)
+            self.bundle_price_spin.blockSignals(False)
+
+    def set_row_highlight(self, row, enabled):
+        color = QColor("#FFF0C2") if enabled else QColor(Qt.GlobalColor.white)
+        for col in range(1, 5):
+            item = self.table.item(row, col)
+            if item:
+                item.setBackground(color)
+
+    def update_base_total(self):
+        total = 0.0
+        for row_info in self.row_widgets:
+            qty = row_info["qty_spin"].value()
+            if qty > 0:
+                total += qty * row_info["base_price"]
+        self.bundle_base_total_label.setText(f"Base total: P{total:,.2f}")
+        return round(total, 2)
+
+    def mark_bundle_price_custom(self, _value):
+        if self.bundle_price_spin.hasFocus():
+            self.bundle_price_spin.setProperty("custom_edit", True)
+
+    def load_bundle_data(self, bundle_code):
+        bundle_code = (bundle_code or "").strip()
+        bundle = bundle_promos.get(bundle_code, {})
+
+        self.bundle_name_edit.setText(bundle.get("name", ""))
+        self.bundle_price_spin.blockSignals(True)
+        self.bundle_price_spin.setValue(float(bundle.get("price", 0)))
+        self.bundle_price_spin.blockSignals(False)
+        self.bundle_price_spin.setProperty("custom_edit", False)
+
+        component_map = {}
+        for component in bundle.get("components", []):
+            key = (component.get("barcode"), component.get("variant_index", 0))
+            component_map[key] = component.get("quantity", 0)
+
+        for row_info in self.row_widgets:
+            key = (row_info["barcode"], row_info["variant_index"])
+            quantity = component_map.get(key, 0)
+            row_info["qty_spin"].blockSignals(True)
+            row_info["qty_spin"].setValue(quantity)
+            row_info["qty_spin"].blockSignals(False)
+            self.table.item(row_info["row"], 4).setText(f"{quantity * row_info['base_price']:.2f}")
+            self.set_row_highlight(row_info["row"], quantity > 0)
+
+        base_total = self.update_base_total()
+        if abs(self.bundle_price_spin.value() - base_total) < 0.01:
+            self.bundle_price_spin.setProperty("custom_edit", False)
+
+    def delete_bundle(self):
+        global bundle_promos
+        bundle_code = self.bundle_code_combo.currentText().strip()
+        if not bundle_code:
+            show_warning("Delete Bundle", "Select a bundle code to delete.", self)
+            return
+
+        if bundle_code not in bundle_promos:
+            show_warning("Delete Bundle", f"Bundle '{bundle_code}' does not exist.", self)
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete Bundle",
+            f"Are you sure you want to delete bundle '{bundle_code}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        bundle_promos.pop(bundle_code, None)
+        save_bundle_promos(self)
+        rebuild_product_variant_lookup()
+        idx = self.bundle_code_combo.findText(bundle_code)
+        if idx != -1:
+            self.bundle_code_combo.removeItem(idx)
+        show_info("Bundle Deleted", f"Bundle '{bundle_code}' has been removed.", self)
+        self.clear_form()
+
+    def handle_save(self):
+        global bundle_promos
+        bundle_code = self.bundle_code_combo.currentText().strip()
+        if not bundle_code:
+            show_error("Validation Error", "Enter a bundle code before saving.", self)
+            return
+        if not re.fullmatch(r"[A-Za-z0-9_\\-]+", bundle_code):
+            show_error(
+                "Validation Error",
+                "Bundle code can only contain letters, numbers, underscores, and hyphens.",
+                self
+            )
+            return
+
+        bundle_code = bundle_code.upper()
+        self.bundle_code_combo.setEditText(bundle_code)
+
+        selected_components = []
+        for row_info in self.row_widgets:
+            quantity = row_info["qty_spin"].value()
+            if quantity <= 0:
+                continue
+            selected_components.append({
+                "barcode": row_info["barcode"],
+                "variant_index": row_info["variant_index"],
+                "quantity": quantity
+            })
+
+        if not selected_components:
+            show_error("Validation Error", "Select at least one product for the bundle.", self)
+            return
+
+        bundle_price = float(self.bundle_price_spin.value())
+        if bundle_price <= 0:
+            show_error("Validation Error", "Bundle price must be greater than zero.", self)
+            return
+
+        bundle_name = self.bundle_name_edit.text().strip() or f"Bundle {bundle_code}"
+        sku = f"BUNDLE_{bundle_code}"
+
+        bundle_promos[bundle_code] = {
+            "code": bundle_code,
+            "name": bundle_name,
+            "price": round(bundle_price, 2),
+            "components": selected_components,
+            "sku": sku
+        }
+
+        save_bundle_promos(self)
+        rebuild_product_variant_lookup()
+
+        if self.bundle_code_combo.findText(bundle_code) == -1:
+            self.bundle_code_combo.addItem(bundle_code)
+
+        show_info("Bundle Saved", f"Bundle '{bundle_code}' saved successfully.", self)
+        self.accept()
 
 # ----------------- Main Window -----------------
 class POSMainWindow(QMainWindow):
@@ -1549,6 +2230,87 @@ class POSMainWindow(QMainWindow):
                 self.display_product_image(None)
             return False
 
+        qty = current_item_count
+        price = lookup['price']
+        if current_discount > 0:
+            price = price * (1 - current_discount / 100)
+        price = round(price, 2)
+
+        bundle_components = lookup.get('bundle_components')
+        if bundle_components:
+            components_copy = deepcopy(bundle_components)
+            insufficient = []
+            bundle_stock_cap = None
+            for component in components_copy:
+                barcode = component.get("barcode")
+                variant_index = component.get("variant_index", 0)
+                component_qty = component.get("quantity", 1)
+                variants = products.get(barcode, [])
+                if not variants:
+                    insufficient.append((component.get("name", barcode), component_qty * qty, 0))
+                    continue
+                if variant_index >= len(variants):
+                    variant_index = 0
+                variant = variants[variant_index]
+                available = variant.get("stock", 0)
+                required = component_qty * qty
+                component["name"] = variant.get("name", barcode)
+                component["variant_index"] = variant_index
+                component["base_price"] = float(variant.get("price", 0))
+                if available < required:
+                    insufficient.append((component["name"], required, available))
+                else:
+                    if component_qty > 0:
+                        component_cap = available // component_qty
+                        bundle_stock_cap = component_cap if bundle_stock_cap is None else min(bundle_stock_cap, component_cap)
+
+            if insufficient:
+                details = "\n".join(
+                    f"- {name}: need {need}, available {avail}"
+                    for name, need, avail in insufficient
+                )
+                show_error(
+                    "Insufficient Stock",
+                    f"Not enough stock for bundle '{lookup['name']}' components:\n{details}",
+                    self
+                )
+                return False
+
+            item = {
+                "name": lookup['name'],
+                "price": price,
+                "qty": qty,
+                "Stock No.": lookup['sku'],
+                "base_stock_no": None,
+                "variant_index": None,
+                "inventory_usage": None,
+                "promo_code": lookup.get('bundle_code'),
+                "bundle_code": lookup.get('bundle_code'),
+                "bundle_components": components_copy,
+                "original_unit_price": lookup['price']
+            }
+
+            self.cart.append(item)
+            bundle_label = f"{lookup['sku']} - {item['name']} (Bundle) x{qty} - P{item['price'] * qty:.2f}"
+            self.listbox.addItem(bundle_label)
+
+            component_summary = ", ".join(
+                f"{component['quantity']}x {component['name']}"
+                for component in components_copy
+            )
+
+            self.label_product_name_display.setText(f"BUNDLE: {item['name']}")
+            self.label_product_price_display.setText(f"Price: P{lookup['price']:.2f}")
+            stock_caption = "Unlimited" if bundle_stock_cap is None else str(bundle_stock_cap)
+            self.label_product_stock_display.setText(f"Bundle Stock: {stock_caption}")
+            self.label_product_barcode_number.setText(f"Includes: {component_summary}")
+            self.display_product_image(lookup.get("image_filename"))
+
+            current_item_count = 1
+            current_discount = 0.0
+            self.update_total()
+            return True
+
         base_barcode = lookup['base_barcode']
         variant_index = lookup.get('variant_index', 0)
         variants = products.get(base_barcode, [])
@@ -1560,12 +2322,6 @@ class POSMainWindow(QMainWindow):
             return False
 
         variant = variants[variant_index] if variant_index < len(variants) else variants[0]
-
-        qty = current_item_count
-        price = lookup['price']
-        if current_discount > 0:
-            price = price * (1 - current_discount / 100)
-        price = round(price, 2)
 
         item = {
             "name": lookup['name'],
@@ -1660,6 +2416,62 @@ class POSMainWindow(QMainWindow):
         if not self.cart:
             show_info("Info", "Cart is empty. Please add items before checking out.", self)
             return
+
+        # Ensure sufficient stock is still available for all items (including bundles) before processing payment.
+        for item in self.cart:
+            qty = item.get('qty', 1)
+            if item.get('bundle_components'):
+                insufficient = []
+                for component in item['bundle_components']:
+                    barcode = component.get("barcode")
+                    variant_index = component.get("variant_index", 0)
+                    component_qty = component.get("quantity", 1)
+                    required = qty * component_qty
+                    variants = products.get(barcode, [])
+                    if not variants:
+                        insufficient.append((component.get("name", barcode), required, 0))
+                        continue
+                    if variant_index >= len(variants):
+                        variant_index = 0
+                    available = variants[variant_index].get("stock", 0)
+                    if available < required:
+                        name = variants[variant_index].get("name", barcode)
+                        insufficient.append((name, required, available))
+                if insufficient:
+                    details = "\n".join(
+                        f"- {name}: need {need}, available {avail}"
+                        for name, need, avail in insufficient
+                    )
+                    show_error(
+                        "Insufficient Stock",
+                        f"Unable to complete checkout. Bundle '{item['name']}' lacks stock:\n{details}",
+                        self
+                    )
+                    return
+            else:
+                base_barcode = item.get('base_stock_no') or item.get('Stock No.')
+                variant_index = item.get('variant_index', 0)
+                inventory_usage = item.get('inventory_usage', 1)
+                required = qty * inventory_usage
+                variants = products.get(base_barcode, [])
+                if not variants:
+                    show_error(
+                        "Inventory Error",
+                        f"Product '{base_barcode}' is missing from inventory. Please remove it from the cart.",
+                        self
+                    )
+                    return
+                if variant_index >= len(variants):
+                    variant_index = 0
+                available = variants[variant_index].get("stock", 0)
+                if available < required:
+                    name = variants[variant_index].get("name", base_barcode)
+                    show_error(
+                        "Insufficient Stock",
+                        f"Product '{name}' only has {available} pcs left, but {required} pcs are needed.",
+                        self
+                    )
+                    return
 
         # ... (Existing code for stock availability, total calculation, payment, etc.) ...
         total = 0
@@ -1819,6 +2631,11 @@ class POSMainWindow(QMainWindow):
                 append_columns(f"{label} @ {unit_price}", line_total)
             else:
                 append_columns(f"{qty} @ {unit_price}", line_total)
+            if item.get('bundle_components'):
+                for component in item['bundle_components']:
+                    component_name = component.get("name") or component.get("barcode")
+                    component_qty = component.get("quantity", 1)
+                    append_columns(f"  - {component_qty} x {component_name}")
             receipt_text_content += "\n"
 
         receipt_text_content += "-" * width + "\n"
@@ -1853,6 +2670,46 @@ class POSMainWindow(QMainWindow):
 
         # Update stock & sales summary after transaction
         for item in self.cart:
+            if item.get('bundle_components'):
+                bundle_qty = item.get('qty', 1)
+                component_infos = []
+                total_base_value = 0.0
+
+                for component in item['bundle_components']:
+                    barcode = component.get("barcode")
+                    variant_index = component.get("variant_index", 0)
+                    quantity_per_bundle = component.get("quantity", 1)
+                    deduction_units = bundle_qty * quantity_per_bundle
+                    variants = products.get(barcode, [])
+                    if not variants:
+                        print(f"Warning: bundle component '{barcode}' missing during inventory update.")
+                        continue
+                    if variant_index >= len(variants):
+                        variant_index = 0
+                    variant = variants[variant_index]
+                    variant["stock"] -= deduction_units
+
+                    base_price = float(variant.get("price", 0))
+                    base_value = base_price * quantity_per_bundle
+                    total_base_value += base_value
+                    component_infos.append({
+                        "barcode": barcode,
+                        "deduction_units": deduction_units,
+                        "base_value": base_value
+                    })
+
+                for info in component_infos:
+                    barcode = info["barcode"]
+                    if barcode not in sales_summary:
+                        sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
+                    sales_summary[barcode]["qty_sold"] += info["deduction_units"]
+                    if total_base_value > 0:
+                        share = info["base_value"] / total_base_value
+                    else:
+                        share = 1 / len(component_infos) if component_infos else 0
+                    sales_summary[barcode]["revenue"] += item['price'] * bundle_qty * share
+                continue
+
             sku = item.get('Stock No.')
             base_barcode = item.get('base_stock_no', sku)
             qty = item.get('qty', 1)
@@ -1868,8 +2725,8 @@ class POSMainWindow(QMainWindow):
                 target_variant["stock"] -= deduction_units
             else:
                 print(f"Warning: Unable to update inventory. Base product '{base_barcode}' not found.")
+                continue
 
-            # Initialize sales_summary entry for the base product if missing
             if base_barcode not in sales_summary:
                 sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
 
@@ -2460,6 +3317,9 @@ def main():
         sys.exit()
 
     if not load_promo_inventory():
+        sys.exit()
+
+    if not load_bundle_promos():
         sys.exit()
 
     rebuild_product_variant_lookup()

@@ -1,0 +1,20 @@
+{
+  "BNDLTW4C": {
+    "code": "BNDLTW4C",
+    "name": "BUNDLE OF 4 SEATER TABLE  WITH 4 PCS CHAIR",
+    "price": 2890.0,
+    "components": [
+      {
+        "barcode": "870 - Brown",
+        "variant_index": 0,
+        "quantity": 1
+      },
+      {
+        "barcode": "9716- Brown",
+        "variant_index": 0,
+        "quantity": 4
+      }
+    ],
+    "sku": "BUNDLE_BNDLTW4C"
+  }
+}
