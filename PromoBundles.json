@@ -1,18 +1,18 @@
 {
   "BNDLTW4C": {
     "code": "BNDLTW4C",
-    "name": "BUNDLE OF 4 SEATER TABLE  WITH 4 PCS CHAIR",
-    "price": 2890.0,
+    "name": "BUNDLE OF 2 TRASHBIn 1 LAUNDRY",
+    "price": 760.0,
     "components": [
       {
-        "barcode": "870 - Brown",
+        "barcode": "2206-A",
         "variant_index": 0,
         "quantity": 1
       },
       {
-        "barcode": "9716- Brown",
+        "barcode": "233",
         "variant_index": 0,
-        "quantity": 4
+        "quantity": 2
       }
     ],
     "sku": "BUNDLE_BNDLTW4C"

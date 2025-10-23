@@ -7,28 +7,68 @@
         "qty_sold": 4,
         "revenue": 2890.0
     },
-    "9848-S": {
-        "qty_sold": 4,
-        "revenue": 1545.0
-    },
-    "339-1": {
+    "727": {
         "qty_sold": 1,
-        "revenue": 0.0
+        "revenue": 150.0
     },
-    "339-2": {
-        "qty_sold": 1,
-        "revenue": 0.0
-    },
-    "339-3": {
-        "qty_sold": 1,
-        "revenue": 0.0
-    },
-    "9868-S": {
-        "qty_sold": 4,
-        "revenue": 2940.0
+    "25-cm-02": {
+        "qty_sold": 7,
+        "revenue": 2450.0
     },
     "EB-B": {
-        "qty_sold": 1,
+        "qty_sold": 15,
         "revenue": 0.0
+    },
+    "25-cm-06": {
+        "qty_sold": 3,
+        "revenue": 825.0
+    },
+    "25-cm-04": {
+        "qty_sold": 6,
+        "revenue": 1800.0
+    },
+    "728": {
+        "qty_sold": 1,
+        "revenue": 100.0
+    },
+    "25-cm-05": {
+        "qty_sold": 6,
+        "revenue": 1440.0
+    },
+    "25-cm-03": {
+        "qty_sold": 2,
+        "revenue": 590.0
+    },
+    "801": {
+        "qty_sold": 1,
+        "revenue": 240.0
+    },
+    "9848-S": {
+        "qty_sold": 1,
+        "revenue": 515.0
+    },
+    "811": {
+        "qty_sold": 1,
+        "revenue": 80.0
+    },
+    "860": {
+        "qty_sold": 1,
+        "revenue": 705.0
+    },
+    "ST-PT-SET-55": {
+        "qty_sold": 1,
+        "revenue": 260.0
+    },
+    "714-B": {
+        "qty_sold": 1,
+        "revenue": 225.0
+    },
+    "25-cm-07": {
+        "qty_sold": 1,
+        "revenue": 440.0
+    },
+    "25-cm-01": {
+        "qty_sold": 1,
+        "revenue": 375.0
     }
 }
