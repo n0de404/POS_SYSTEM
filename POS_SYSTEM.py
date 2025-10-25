@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import csv
+import math
 from datetime import datetime
 from functools import partial
 import tempfile
@@ -26,9 +27,9 @@ from PIL import Image, ImageQt
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
                              QListWidget, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
-                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView)
-from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette
-from PyQt6.QtCore import Qt, QSize, QStringListModel
+                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton)
+from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush
+from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QEvent
 
 # --- Global Variables ---
 products = {}  # Stores product data from CSV: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
@@ -994,71 +995,292 @@ class ReceiptDialog(QDialog):
 
 # =================== PyQt6 UI Classes ===================
 
+class EyeToggleButton(QToolButton):
+    """Animated eye button that follows the cursor and toggles between open/closed states."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("passwordToggle")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(36, 36)
+        self.setMouseTracking(True)
+        self._pupil_offset = QPointF(0.0, 0.0)
+        self._max_offset = 5.0
+        self._eyes_closed = False
+        self._app = QApplication.instance()
+        if self._app:
+            self._app.installEventFilter(self)
+        self.destroyed.connect(self.cleanup)
+
+    def cleanup(self):
+        if self._app:
+            self._app.removeEventFilter(self)
+            self._app = None
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseMove:
+            global_pos = event.globalPosition() if hasattr(event, "globalPosition") else event.globalPos()
+            self._update_pupil(global_pos)
+        elif obj is self and event.type() in (QEvent.Type.Leave, QEvent.Type.Hide):
+            self._reset_pupil()
+        return super().eventFilter(obj, event)
+
+    def leaveEvent(self, event):
+        self._reset_pupil()
+        super().leaveEvent(event)
+
+    def setEyesClosed(self, closed):
+        if self._eyes_closed != closed:
+            self._eyes_closed = closed
+            self.update()
+
+    def _reset_pupil(self):
+        if self._pupil_offset != QPointF(0.0, 0.0):
+            self._pupil_offset = QPointF(0.0, 0.0)
+            self.update()
+
+    def _update_pupil(self, global_pos):
+        if not self.isVisible():
+            return
+        try:
+            center_global = QPointF(self.mapToGlobal(self.rect().center()))
+            direction = global_pos - center_global
+        except RuntimeError:
+            return
+
+        distance = math.hypot(direction.x(), direction.y())
+        if distance > 0:
+            scale = min(self._max_offset / distance, 1.0)
+            direction = QPointF(direction.x() * scale, direction.y() * scale)
+        self._pupil_offset = direction
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        rect = self.rect()
+        center_x = rect.center().x()
+        center_y = rect.center().y()
+        eye_radius = min(rect.width(), rect.height()) * 0.28
+        pupil_radius = eye_radius * 0.45
+        spacing = eye_radius * 1.8
+
+        left_center = QPointF(center_x - spacing / 2.0, center_y)
+        right_center = QPointF(center_x + spacing / 2.0, center_y)
+
+        stroke_color = QColor("#1f2d3d")
+        fill_color = QColor("#ffffff")
+        pupil_color = QColor("#1f2d3d")
+        highlight_color = QColor("#6c7a89")
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if self._eyes_closed:
+            pen = QPen(stroke_color, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            eyelid_offset = eye_radius * 0.9
+            painter.drawArc(
+                int(left_center.x() - eyelid_offset),
+                int(left_center.y() - eye_radius * 0.2),
+                int(eyelid_offset * 2),
+                int(eye_radius * 0.8),
+                0,
+                180 * 16,
+            )
+            painter.drawArc(
+                int(right_center.x() - eyelid_offset),
+                int(right_center.y() - eye_radius * 0.2),
+                int(eyelid_offset * 2),
+                int(eye_radius * 0.8),
+                0,
+                180 * 16,
+            )
+        else:
+            pen = QPen(stroke_color, 1.8)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(fill_color))
+            painter.drawEllipse(left_center, eye_radius, eye_radius * 0.85)
+            painter.drawEllipse(right_center, eye_radius, eye_radius * 0.85)
+
+            pupil_offset = self._pupil_offset
+            painter.setBrush(QBrush(pupil_color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            left_pupil_center = QPointF(left_center.x() + pupil_offset.x() * 0.45, left_center.y() + pupil_offset.y() * 0.45)
+            right_pupil_center = QPointF(right_center.x() + pupil_offset.x() * 0.45, right_center.y() + pupil_offset.y() * 0.45)
+            painter.drawEllipse(left_pupil_center, pupil_radius, pupil_radius)
+            painter.drawEllipse(right_pupil_center, pupil_radius, pupil_radius)
+
+            painter.setBrush(QBrush(highlight_color))
+            highlight_radius = pupil_radius * 0.4
+            highlight_offset = QPointF(-pupil_radius * 0.4, -pupil_radius * 0.4)
+            painter.drawEllipse(left_pupil_center + highlight_offset, highlight_radius, highlight_radius)
+            painter.drawEllipse(right_pupil_center + highlight_offset, highlight_radius, highlight_radius)
+
+        painter.end()
+
+
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Login")
-        self.setFixedSize(400, 280)
+        self.setFixedSize(460, 360)
         self.current_user_name = None
 
         self.all_usernames_list = list(users_data.keys())
 
-        layout = QVBoxLayout()
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #f4f6fb;
+            }
+            QFrame#loginCard {
+                background-color: #ffffff;
+                border-radius: 14px;
+                padding: 24px 28px;
+                border: 1px solid #e6e9f2;
+            }
+            QLabel#titleLabel {
+                font-size: 20px;
+                font-weight: 600;
+                color: #1f2d3d;
+            }
+            QLabel#subtitleLabel {
+                color: #6c7a89;
+                font-size: 11pt;
+            }
+            QLabel[class="sectionLabel"] {
+                font-size: 10pt;
+                font-weight: 500;
+                color: #2c3e50;
+            }
+            QComboBox, QLineEdit {
+                border: 1px solid #dfe4ec;
+                border-radius: 10px;
+                padding: 8px 14px;
+                background-color: #f9fafc;
+                font-size: 10pt;
+            }
+            QComboBox:focus, QLineEdit:focus {
+                border: 1px solid #4c8bf5;
+                background-color: #ffffff;
+            }
+            QPushButton#loginButton {
+                background-color: #3a7afe;
+                color: #ffffff;
+                border-radius: 12px;
+                padding: 10px 18px;
+                font-weight: 600;
+                font-size: 11pt;
+            }
+            QPushButton#loginButton:hover {
+                background-color: #2f6bee;
+            }
+            QPushButton#secondaryButton {
+                background-color: transparent;
+                color: #3a7afe;
+                border: none;
+                font-weight: 600;
+            }
+            QPushButton#secondaryButton:hover {
+                color: #1f4fd6;
+            }
+            QToolButton#passwordToggle {
+                border: none;
+                background: transparent;
+                font-size: 16px;
+                padding: 0 6px;
+            }
+            QToolButton#passwordToggle:hover {
+                color: #3a7afe;
+            }
+            """
+        )
 
-        lbl_username = QLabel("Username:")
-        lbl_username.setFont(QFont("Arial", 10))
-        layout.addWidget(lbl_username)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(32, 32, 32, 32)
+        main_layout.setSpacing(16)
+        main_layout.addStretch(1)
+
+        card = QFrame()
+        card.setObjectName("loginCard")
+        card.setMaximumWidth(360)
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(18)
+
+        title_label = QLabel("Cashier Login")
+        title_label.setObjectName("titleLabel")
+        card_layout.addWidget(title_label)
+
+        subtitle_label = QLabel("Sign in to continue serving customers efficiently.")
+        subtitle_label.setObjectName("subtitleLabel")
+        subtitle_label.setWordWrap(True)
+        card_layout.addWidget(subtitle_label)
+
+        lbl_username = QLabel("Username")
+        lbl_username.setProperty("class", "sectionLabel")
+        card_layout.addWidget(lbl_username)
 
         self.combo_username = QComboBox()
         self.combo_username.setEditable(True)
         self.combo_username.addItems(self.all_usernames_list)
         if self.all_usernames_list:
             self.combo_username.setCurrentIndex(0)
-        self.combo_username.setFixedWidth(300)
-        layout.addWidget(self.combo_username)
+        self.combo_username.setPlaceholderText("Select or type username")
+        self.combo_username.setMinimumHeight(38)
+        card_layout.addWidget(self.combo_username)
 
-        lbl_password = QLabel("Password:")
-        lbl_password.setFont(QFont("Arial", 10))
-        layout.addWidget(lbl_password)
+        lbl_password = QLabel("Password")
+        lbl_password.setProperty("class", "sectionLabel")
+        card_layout.addWidget(lbl_password)
 
         password_layout = QHBoxLayout()
+        password_layout.setContentsMargins(0, 0, 0, 0)
+        password_layout.setSpacing(6)
         self.entry_password = QLineEdit()
         self.entry_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.entry_password.setFixedWidth(300)
+        self.entry_password.setMinimumHeight(38)
         password_layout.addWidget(self.entry_password)
 
-        self.btn_toggle_password = QPushButton("Show")
-        self.btn_toggle_password.setFixedWidth(50)
-        self.btn_toggle_password.clicked.connect(self.toggle_password_visibility)
+        self.btn_toggle_password = EyeToggleButton()
+        self.btn_toggle_password.setToolTip("Show password")
+        self.btn_toggle_password.toggled.connect(self.toggle_password_visibility)
         password_layout.addWidget(self.btn_toggle_password)
 
-        layout.addLayout(password_layout)
+        card_layout.addLayout(password_layout)
 
         btn_login = QPushButton("Login")
-        btn_login.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        btn_login.setObjectName("loginButton")
+        btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_login.setMinimumHeight(42)
         btn_login.clicked.connect(self.do_login)
-        btn_login.setFixedWidth(150)
-        layout.addWidget(btn_login, alignment=Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(btn_login)
 
         btn_create_account = QPushButton("Create Account")
-        btn_create_account.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        btn_create_account.setObjectName("secondaryButton")
+        btn_create_account.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_create_account.setFlat(True)
         btn_create_account.clicked.connect(self.create_account_flow)
-        btn_create_account.setFixedWidth(150)
-        layout.addWidget(btn_create_account, alignment=Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(btn_create_account, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        self.setLayout(layout)
+        main_layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+        main_layout.addStretch(1)
 
         # Connect completer-like behavior manually
         self.combo_username.lineEdit().textEdited.connect(self.update_username_options)
         self.combo_username.activated.connect(self.handle_combobox_selection)
 
-    def toggle_password_visibility(self):
-        if self.entry_password.echoMode() == QLineEdit.EchoMode.Password:
+    def toggle_password_visibility(self, checked):
+        if checked:
             self.entry_password.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_toggle_password.setText("Hide")
+            self.btn_toggle_password.setEyesClosed(True)
+            self.btn_toggle_password.setToolTip("Hide password")
         else:
             self.entry_password.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_toggle_password.setText("Show")
+            self.btn_toggle_password.setEyesClosed(False)
+            self.btn_toggle_password.setToolTip("Show password")
 
     def update_username_options(self, text):
         typed_text = text.lower()
@@ -1214,51 +1436,167 @@ class InventoryManagementDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Inventory Management - Product Stock")
         self.resize(700, 450)
+        self.setObjectName("inventoryDialog")
         self.products = products  # Store the products dictionary
 
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        self.setStyleSheet(
+            """
+            QDialog#inventoryDialog {
+                background-color: #f6f8fb;
+            }
+            QFrame#inventoryCard {
+                background-color: #ffffff;
+                border-radius: 16px;
+                border: 1px solid #e2e6ef;
+                padding: 20px 24px;
+            }
+            QLabel#inventoryTitle {
+                font-size: 18px;
+                font-weight: 600;
+                color: #203040;
+                padding-bottom: 8px;
+            }
+            QLabel#inventorySubtitle {
+                color: #6b7a90;
+                font-size: 10pt;
+            }
+            QTableWidget {
+                background-color: #fbfcff;
+                border: 1px solid #e2e6ef;
+                border-radius: 12px;
+                gridline-color: #d4d9e2;
+                font-size: 10pt;
+                selection-background-color: #d9e4ff;
+                selection-color: #1f2d3d;
+                alternate-background-color: #f3f6fb;
+            }
+            QHeaderView::section {
+                background-color: #eff2f9;
+                color: #4a5872;
+                padding: 8px;
+                border: none;
+                border-right: 1px solid #d9dfec;
+                font-weight: 600;
+            }
+            QHeaderView::section:last {
+                border-right: none;
+            }
+            QFrame#buttonStrip {
+                background-color: #f9fbff;
+                border-radius: 12px;
+                border: 1px solid #e2e7f1;
+            }
+            QPushButton[class="inventoryAction"] {
+                background-color: #3a7afe;
+                color: #ffffff;
+                border: none;
+                border-radius: 10px;
+                padding: 9px 18px;
+                font-weight: 600;
+                min-width: 120px;
+            }
+            QPushButton[class="inventoryAction"]:hover {
+                background-color: #2f6bee;
+            }
+            QPushButton[class="inventoryAction"]:pressed {
+                background-color: #265ed8;
+            }
+            QPushButton[class="inventorySecondary"] {
+                background-color: transparent;
+                color: #3a7afe;
+                border: 1px solid #c7d5f6;
+                border-radius: 10px;
+                padding: 9px 18px;
+                font-weight: 600;
+                min-width: 140px;
+            }
+            QPushButton[class="inventorySecondary"]:hover {
+                background-color: #ecf2ff;
+            }
+            QPushButton[class="inventorySecondary"]:pressed {
+                background-color: #dbe6ff;
+            }
+            """
+        )
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(24, 24, 24, 24)
+        outer_layout.setSpacing(18)
+
+        card = QFrame()
+        card.setObjectName("inventoryCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(18)
 
         title = QLabel("Current Product Stocks")
-        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        layout.addWidget(title)
+        title.setObjectName("inventoryTitle")
+        card_layout.addWidget(title)
+
+        subtitle = QLabel("Review stock levels, perform imports, and manage promos from a single dashboard.")
+        subtitle.setObjectName("inventorySubtitle")
+        subtitle.setWordWrap(True)
+        card_layout.addWidget(subtitle)
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Stock No.", "Product Name", "Stock Left"])
         self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        card_layout.addWidget(self.table)
 
-        # Add Import, Replenish, and Export buttons
-        btn_layout = QHBoxLayout()
+        button_strip = QFrame()
+        button_strip.setObjectName("buttonStrip")
+        button_layout = QHBoxLayout(button_strip)
+        button_layout.setContentsMargins(20, 16, 20, 16)
+        button_layout.setSpacing(12)
+
         self.btn_import = QPushButton("Import Excel")
+        self.btn_import.setProperty("class", "inventoryAction")
+        self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import.clicked.connect(self.import_excel)
-        btn_layout.addWidget(self.btn_import)
+        button_layout.addWidget(self.btn_import)
 
         self.btn_replenish = QPushButton("Replenish Stock")
+        self.btn_replenish.setProperty("class", "inventoryAction")
+        self.btn_replenish.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_replenish.clicked.connect(self.replenish_stock)
-        btn_layout.addWidget(self.btn_replenish)
+        button_layout.addWidget(self.btn_replenish)
 
         self.btn_export = QPushButton("Export Summary")
+        self.btn_export.setProperty("class", "inventoryAction")
+        self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_export.clicked.connect(self.export_summary)
-        btn_layout.addWidget(self.btn_export)
+        button_layout.addWidget(self.btn_export)
 
         self.btn_manage_promos = QPushButton("Manage Promos")
+        self.btn_manage_promos.setProperty("class", "inventorySecondary")
+        self.btn_manage_promos.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manage_promos.clicked.connect(self.manage_promos)
-        btn_layout.addWidget(self.btn_manage_promos)
+        button_layout.addWidget(self.btn_manage_promos)
 
         self.btn_manage_bundles = QPushButton("Manage Bundles")
+        self.btn_manage_bundles.setProperty("class", "inventorySecondary")
+        self.btn_manage_bundles.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manage_bundles.clicked.connect(self.manage_bundles)
-        btn_layout.addWidget(self.btn_manage_bundles)
+        button_layout.addWidget(self.btn_manage_bundles)
 
         self.btn_manage_basket = QPushButton("Manage Basket Rewards")
+        self.btn_manage_basket.setProperty("class", "inventorySecondary")
+        self.btn_manage_basket.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manage_basket.clicked.connect(self.manage_basket_promos)
-        btn_layout.addWidget(self.btn_manage_basket)
+        button_layout.addWidget(self.btn_manage_basket)
+
+        button_layout.addStretch()
 
         self.btn_close = QPushButton("Close")
+        self.btn_close.setProperty("class", "inventorySecondary")
+        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.clicked.connect(self.close)
-        btn_layout.addWidget(self.btn_close)
+        button_layout.addWidget(self.btn_close)
 
-        layout.addLayout(btn_layout)
+        card_layout.addWidget(button_strip)
+        outer_layout.addWidget(card)
 
         self.populate_table()
 
