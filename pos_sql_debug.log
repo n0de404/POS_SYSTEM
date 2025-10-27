@@ -1,0 +1,132 @@
+[2025-10-24 16:33:47] POS_SYSTEM_SQL.py starting via __main__.
+[2025-10-24 16:33:47] Connecting to database and starting data load sequence.
+[2025-10-24 16:33:47] Attempting to load users.
+[2025-10-24 16:33:48] Database connection established successfully.
+[2025-10-24 16:33:48] Users loaded successfully.
+[2025-10-24 16:33:48] Attempting to load products.
+[2025-10-24 16:33:48] Database connection established successfully.
+[2025-10-24 16:33:48] Products loaded successfully.
+[2025-10-24 16:33:48] Attempting to load promo inventory.
+[2025-10-24 16:33:48] Database connection established successfully.
+[2025-10-24 16:33:48] Promo inventory loaded successfully.
+[2025-10-24 16:33:48] Attempting to load bundle promos.
+[2025-10-24 16:33:48] Database connection established successfully.
+[2025-10-24 16:33:48] Bundle promos loaded successfully.
+[2025-10-24 16:33:48] Attempting to load basket promos.
+[2025-10-24 16:33:49] Database connection established successfully.
+[2025-10-24 16:33:49] Basket promos loaded successfully.
+[2025-10-24 16:33:49] Rebuilt product variant lookup.
+[2025-10-24 16:33:49] Attempting to build inventory summary.
+[2025-10-24 16:33:49] Database connection established successfully.
+[2025-10-24 16:33:49] Inventory summary loaded successfully.
+[2025-10-24 16:33:49] Attempting to build sales summary.
+[2025-10-24 16:33:49] Database connection established successfully.
+[2025-10-24 16:33:49] Sales summary loaded successfully.
+[2025-10-24 16:33:49] Attempting to load receipts archive.
+[2025-10-24 16:33:49] Database connection established successfully.
+[2025-10-24 16:33:49] Receipts archive loaded successfully.
+[2025-10-24 16:33:49] Attempting to load tendered amounts.
+[2025-10-24 16:33:49] Database connection established successfully.
+[2025-10-24 16:33:49] Tendered amounts loaded successfully.
+[2025-10-24 16:35:56] Database connection established successfully.
+[2025-10-24 16:35:56] ERROR: Print Error - Printing executable (e.g., SumatraPDF.exe) not found in PATH.
+Could not print receipt.
+[2025-10-24 16:36:07] Database connection established successfully.
+[2025-10-24 16:36:10] Database connection established successfully.
+[2025-10-24 16:36:10] Database connection established successfully.
+[2025-10-24 16:36:15] Database connection established successfully.
+[2025-10-24 16:36:34] ERROR: Error - Please select a product from the list to edit.
+[2025-10-24 16:37:06] Database connection established successfully.
+[2025-10-24 16:38:07] POS_SYSTEM_SQL.py starting via __main__.
+[2025-10-24 16:38:07] Connecting to database and starting data load sequence.
+[2025-10-24 16:38:07] Attempting to load users.
+[2025-10-24 16:38:07] Database connection established successfully.
+[2025-10-24 16:38:07] Users loaded successfully.
+[2025-10-24 16:38:07] Attempting to load products.
+[2025-10-24 16:38:07] Database connection established successfully.
+[2025-10-24 16:38:07] Products loaded successfully.
+[2025-10-24 16:38:07] Attempting to load promo inventory.
+[2025-10-24 16:38:07] Database connection established successfully.
+[2025-10-24 16:38:07] Promo inventory loaded successfully.
+[2025-10-24 16:38:07] Attempting to load bundle promos.
+[2025-10-24 16:38:07] Database connection established successfully.
+[2025-10-24 16:38:07] Bundle promos loaded successfully.
+[2025-10-24 16:38:07] Attempting to load basket promos.
+[2025-10-24 16:38:07] Database connection established successfully.
+[2025-10-24 16:38:07] Basket promos loaded successfully.
+[2025-10-24 16:38:07] Rebuilt product variant lookup.
+[2025-10-24 16:38:07] Attempting to build inventory summary.
+[2025-10-24 16:38:08] Database connection established successfully.
+[2025-10-24 16:38:08] Inventory summary loaded successfully.
+[2025-10-24 16:38:08] Attempting to build sales summary.
+[2025-10-24 16:38:08] Database connection established successfully.
+[2025-10-24 16:38:08] Sales summary loaded successfully.
+[2025-10-24 16:38:08] Attempting to load receipts archive.
+[2025-10-24 16:38:08] Database connection established successfully.
+[2025-10-24 16:38:08] Receipts archive loaded successfully.
+[2025-10-24 16:38:08] Attempting to load tendered amounts.
+[2025-10-24 16:38:08] Database connection established successfully.
+[2025-10-24 16:38:08] Tendered amounts loaded successfully.
+[2025-10-24 16:38:28] ERROR: Error - Product with Stock No '2207' not found.
+[2025-10-24 16:39:02] Database connection established successfully.
+[2025-10-24 16:43:43] POS_SYSTEM_SQL.py starting via __main__.
+[2025-10-24 16:43:43] Connecting to database and starting data load sequence.
+[2025-10-24 16:43:43] Attempting to load users.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Users loaded successfully.
+[2025-10-24 16:43:44] Attempting to load products.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Products loaded successfully.
+[2025-10-24 16:43:44] Attempting to load promo inventory.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Promo inventory loaded successfully.
+[2025-10-24 16:43:44] Attempting to load bundle promos.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Bundle promos loaded successfully.
+[2025-10-24 16:43:44] Attempting to load basket promos.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Basket promos loaded successfully.
+[2025-10-24 16:43:44] Rebuilt product variant lookup.
+[2025-10-24 16:43:44] Attempting to build inventory summary.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Inventory summary loaded successfully.
+[2025-10-24 16:43:44] Attempting to build sales summary.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Sales summary loaded successfully.
+[2025-10-24 16:43:44] Attempting to load receipts archive.
+[2025-10-24 16:43:44] Database connection established successfully.
+[2025-10-24 16:43:44] Receipts archive loaded successfully.
+[2025-10-24 16:43:44] Attempting to load tendered amounts.
+[2025-10-24 16:43:45] Database connection established successfully.
+[2025-10-24 16:43:45] Tendered amounts loaded successfully.
+[2025-10-24 17:14:12] POS_SYSTEM_SQL.py starting via __main__.
+[2025-10-24 17:14:12] Connecting to database and starting data load sequence.
+[2025-10-24 17:14:12] Attempting to load users.
+[2025-10-24 17:14:12] Database connection established successfully.
+[2025-10-24 17:14:12] Users loaded successfully.
+[2025-10-24 17:14:12] Attempting to load products.
+[2025-10-24 17:14:12] Database connection established successfully.
+[2025-10-24 17:14:12] Products loaded successfully.
+[2025-10-24 17:14:12] Attempting to load promo inventory.
+[2025-10-24 17:14:12] Database connection established successfully.
+[2025-10-24 17:14:12] Promo inventory loaded successfully.
+[2025-10-24 17:14:12] Attempting to load bundle promos.
+[2025-10-24 17:14:12] Database connection established successfully.
+[2025-10-24 17:14:12] Bundle promos loaded successfully.
+[2025-10-24 17:14:12] Attempting to load basket promos.
+[2025-10-24 17:14:13] Database connection established successfully.
+[2025-10-24 17:14:13] Basket promos loaded successfully.
+[2025-10-24 17:14:13] Rebuilt product variant lookup.
+[2025-10-24 17:14:13] Attempting to build inventory summary.
+[2025-10-24 17:14:13] Database connection established successfully.
+[2025-10-24 17:14:13] Inventory summary loaded successfully.
+[2025-10-24 17:14:13] Attempting to build sales summary.
+[2025-10-24 17:14:13] Database connection established successfully.
+[2025-10-24 17:14:13] Sales summary loaded successfully.
+[2025-10-24 17:14:13] Attempting to load receipts archive.
+[2025-10-24 17:14:13] Database connection established successfully.
+[2025-10-24 17:14:13] Receipts archive loaded successfully.
+[2025-10-24 17:14:13] Attempting to load tendered amounts.
+[2025-10-24 17:14:13] Database connection established successfully.
+[2025-10-24 17:14:13] Tendered amounts loaded successfully.
+[2025-10-24 17:15:37] Database connection established successfully.

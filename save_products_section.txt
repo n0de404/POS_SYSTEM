@@ -1,0 +1,141 @@
+def save_products_to_csv(parent=None):
+    """
+    Writes the in-memory product catalog back to MySQL.
+    """
+    conn = get_db_connection()
+    if not conn:
+        show_error("Database Error", "Unable to connect to MySQL to save products.", parent)
+        return
+
+    try:
+        with conn.cursor() as cursor:
+            seen_stock_numbers = set()
+            for stock_no, variants in products.items():
+                if not variants:
+                    continue
+
+                primary_variant = variants[0]
+                seen_stock_numbers.add(stock_no)
+
+                cursor.execute(
+                    "SELECT product_id FROM products WHERE stock_no = %s",
+                    (stock_no,),
+                )
+                row = cursor.fetchone()
+
+                if row:
+                    product_id = row[0]
+                    cursor.execute(
+                        """
+                        UPDATE products
+                           SET name = %s,
+                               price = %s,
+                               stock = %s,
+                               original_stock = %s,
+                               image_filename = %s
+                         WHERE product_id = %s
+                        """,
+                        (
+                            primary_variant.get("name") or stock_no,
+                            float(primary_variant.get("price") or 0.0),
+                            int(primary_variant.get("stock") or 0),
+                            int(primary_variant.get("original_stock") or 0),
+                            primary_variant.get("image_filename") or "",
+                            product_id,
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO products (stock_no, name, price, stock, original_stock, image_filename)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            stock_no,
+                            primary_variant.get("name") or stock_no,
+                            float(primary_variant.get("price") or 0.0),
+                            int(primary_variant.get("stock") or 0),
+                            int(primary_variant.get("original_stock") or 0),
+                            primary_variant.get("image_filename") or "",
+                        ),
+                    )
+                    product_id = cursor.lastrowid
+
+                # Ensure promo assignments match the in-memory structure
+                cursor.execute(
+                    "DELETE FROM product_promotions WHERE product_id = %s",
+                    (product_id,),
+                )
+
+                promo_entries = []
+                for variant in variants:
+                    promos = variant.get("promos") or {}
+                    for promo_code, promo_price in promos.items():
+                        try:
+                            promo_entries.append(
+                                (
+                                    product_id,
+                                    promo_code,
+                                    float(promo_price or 0.0),
+                                )
+                            )
+                        except (TypeError, ValueError):
+                            promo_entries.append(
+                                (
+                                    product_id,
+                                    promo_code,
+                                    float(primary_variant.get("price") or 0.0),
+                                )
+                            )
+
+                if promo_entries:
+                    cursor.executemany(
+                        """
+                        INSERT INTO product_promotions (product_id, promo_code, promo_price)
+                        VALUES (%s, %s, %s)
+                        """,
+                        promo_entries,
+                    )
+
+            if seen_stock_numbers:
+                format_strings = ", ".join(["%s"] * len(seen_stock_numbers))
+                cursor.execute(
+                    f"DELETE FROM products WHERE stock_no NOT IN ({format_strings})",
+                    tuple(seen_stock_numbers),
+                )
+
+        conn.commit()
+    except Error as exc:
+        conn.rollback()
+        show_error("Save Error", f"Failed to save products: {exc}", parent)
+    finally:
+        if conn.is_connected():
+            conn.close()
+
+
+
+
+def load_users(parent=None):
+    """
+    Loads usernames and passwords from MySQL.
+    """
+    global users_data, ADMIN_PASSWORD
+    users_data = {}
+
+    rows = fetch_all("SELECT username, password_hash FROM users ORDER BY username")
+    if rows is None:
+        show_error("Database Error", "Failed to load users.", parent)
+        return
+
+    for row in rows:
+        users_data[row["username"]] = row.get("password_hash") or ""
+
+    if not users_data:
+        users_data["cashier"] = "cashier123"
+        save_users(parent)
+
+    if "admin" in users_data:
+        ADMIN_PASSWORD = users_data["admin"]
+
+
+def save_users(parent=None):

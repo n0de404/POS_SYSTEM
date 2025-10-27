@@ -1,0 +1,199 @@
+{
+  "code": 200,
+  "message": "Saved Successfully",
+  "data": {
+    "warehouse": {
+      "id": "3",
+      "name": "[W01] - Bignay Dock 1"
+    },
+    "includeZero": false,
+    "items": [
+      {
+        "productId": 475,
+        "sku": "727",
+        "name": "13 Inches Basin - Deluxe",
+        "unit": "PC",
+        "stock": 2052
+      },
+      {
+        "productId": 476,
+        "sku": "510",
+        "name": "13 Inches Basin",
+        "unit": "PC",
+        "stock": 4886
+      },
+      {
+        "productId": 477,
+        "sku": "339-1",
+        "name": "13 Inches Basin Black with Design",
+        "unit": "PC",
+        "stock": 3009
+      },
+      {
+        "productId": 478,
+        "sku": "-B13-ORD",
+        "name": "13 Inches Basin - Ordinary",
+        "unit": "PC",
+        "stock": 3986
+      },
+      {
+        "productId": 480,
+        "sku": "-B15-A",
+        "name": "15 Inches Basin - Deluxe",
+        "unit": "PC",
+        "stock": 609
+      },
+      {
+        "productId": 481,
+        "sku": "-B15-AB",
+        "name": "15 Inches Basin - Colored",
+        "unit": "PC",
+        "stock": 2025
+      },
+      {
+        "productId": 482,
+        "sku": "-B15-BLACK",
+        "name": "15 Inches Basin Black with Design",
+        "unit": "PC",
+        "stock": 1014
+      },
+      {
+        "productId": 483,
+        "sku": "-B15-ORD",
+        "name": "15 Inches Basin - Ordinary",
+        "unit": "PC",
+        "stock": 4415
+      },
+      {
+        "productId": 485,
+        "sku": "-B17-A",
+        "name": "17 Inches Basin Deluxe",
+        "unit": "PC",
+        "stock": 153
+      },
+      {
+        "productId": 487,
+        "sku": "-B17-BLACK",
+        "name": "17 Inches Basin Black",
+        "unit": "PC",
+        "stock": 1191
+      },
+      {
+        "productId": 488,
+        "sku": "-B17-ORD",
+        "name": "17 Inches Basin Ordinary",
+        "unit": "PC",
+        "stock": 3273
+      },
+      {
+        "productId": 490,
+        "sku": "-B20-AB",
+        "name": "20 Inches Basin - AB",
+        "unit": "PC",
+        "stock": 1348
+      },
+      {
+        "productId": 491,
+        "sku": "-B20-BLACK",
+        "name": "20 Inches Basin - Black",
+        "unit": "PC",
+        "stock": 632
+      },
+      {
+        "productId": 493,
+        "sku": "-B22-AB",
+        "name": "22 Inches Basin - AB",
+        "unit": "PC",
+        "stock": 1760
+      },
+      {
+        "productId": 494,
+        "sku": "-B22-BLACK",
+        "name": "22 Inches Basin - Black",
+        "unit": "PC",
+        "stock": 1193
+      },
+      {
+        "productId": 497,
+        "sku": "-B24-AB",
+        "name": "24 Inches Basin - Baby Color",
+        "unit": "PC",
+        "stock": 274
+      },
+      {
+        "productId": 498,
+        "sku": "-B24-BLACK",
+        "name": "24 Inches Basin - Black",
+        "unit": "PC",
+        "stock": 284
+      },
+      {
+        "productId": 548,
+        "sku": "-HF-17-A",
+        "name": "17\" Hanger Flat Deluxe (6 Pcs/Set)",
+        "unit": "SET",
+        "stock": 261
+      },
+      {
+        "productId": 547,
+        "sku": "-HF-17-BLACK",
+        "name": "17\" Hanger Flat Black (6 Pcs/Set)",
+        "unit": "SET",
+        "stock": 2879
+      },
+      {
+        "productId": 8522,
+        "sku": "-HF-30-GREEN",
+        "name": "30 Inches Towel Hanger (2 Pcs/Set) Green",
+        "unit": "SET",
+        "stock": 118
+      },
+      {
+        "productId": 8523,
+        "sku": "-HF-30-ORANGE",
+        "name": "30 Inches Towel Hanger (2 Pcs/Set) Orange",
+        "unit": "SET",
+        "stock": 354
+      },
+      {
+        "productId": 8520,
+        "sku": "-HF-30-PINK",
+        "name": "30 Inches Towel Hanger (2 Pcs/Set) Pink",
+        "unit": "SET",
+        "stock": 144
+      },
+      {
+        "productId": 8524,
+        "sku": "-HF-30-VIOLET",
+        "name": "30 Inches Towel Hanger (2 Pcs/Set) Violet",
+        "unit": "SET",
+        "stock": 67
+      },
+      {
+        "productId": 104,
+        "sku": "-M-002",
+        "name": "Hand Fan 9.5 Inches diameter",
+        "unit": "PC",
+        "stock": 238
+      },
+      {
+        "productId": 105,
+        "sku": "-M-003",
+        "name": "Hand Fan Small",
+        "unit": "PC",
+        "stock": 156
+      },
+      {
+        "productId": 178,
+        "sku": "-P4",
+        "name": "40 mm Puto Cup",
+        "unit": "PC",
+        "stock": 276866
+      }
+    ],
+    "message": [],
+    "error": [],
+    "warning": []
+  },
+  "warning": []
+}

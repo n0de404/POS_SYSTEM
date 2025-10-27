@@ -1,0 +1,16 @@
+{
+  "base_url": "http://<url>/philtop/IMS/index.php/v1",
+  "warehouse_id": 3,
+  "customer_id": 1471,
+  "include_zero": false,
+  "login_identity": "jobapi",
+  "login_password": "replace-me",
+  "token_ttl_seconds": 604800,
+  "force_new_token_on_login": false,
+  "order_reference_prefix": "POS",
+  "default_reference": null,
+  "default_notes": "Submitted via POS application",
+  "include_unit_price": false,
+  "clear_sales_summary_after_post": false,
+  "request_timeout_seconds": 30
+}

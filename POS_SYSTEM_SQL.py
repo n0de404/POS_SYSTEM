@@ -3,14 +3,15 @@ import os
 import re
 import csv
 from datetime import datetime, timedelta
+import time
 from functools import partial
 import tempfile
 import subprocess
 import json  # Import the json module
 from copy import deepcopy
+import shutil
 import textwrap
 import pandas as pd
-import requests
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -19,17 +20,23 @@ from reportlab.lib.units import inch, mm
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+import requests
 from PyQt6.QtWidgets import QSizePolicy, QSpacerItem, QTabWidget  # Import QTabWidget
 from PyQt6.QtWidgets import QFileDialog  # Import QFileDialog for file dialog
+
+# --- New imports for MySQL-backed persistence ---
+import mysql.connector
+from mysql.connector import Error
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from PIL import Image, ImageQt
 
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
-                             QListWidget, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
+                             QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
                              QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton)
-from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette
-from PyQt6.QtCore import Qt, QSize, QStringListModel
+from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush
+from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF
 
 # --- Global Variables ---
 products = {}  # Stores product data from CSV: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
@@ -42,6 +49,7 @@ total_gcash_tendered = 0.0
 current_sales_number = 1  # For unique sales receipt numbers
 current_transaction_number = 1  # For unique transaction numbers
 
+inventory_summary = {}
 sales_summary = {}  # Stores sales data for reporting: {barcode: {"qty_sold": ..., "revenue": ...}}
 product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
 promo_inventory_map = {}  # Maps promo code to the number of base units consumed per sale
@@ -50,8 +58,9 @@ bundle_promos = {}  # Stores bundle promos with their component details
 current_theme_preference = "system"
 current_theme_effective = "light"
 basket_promos = []  # Stores basket-size promo tiers
+BUNDLE_IMAGE_COLUMN_AVAILABLE = None  # Tracks bundles.image_filename availability
 
-users_data = {}  # Stores usernames and their passwords: {username: password}
+users_data = {}  # Stores usernames and hashed passwords: {username: {"password_hash": "...", "is_admin": bool}}
 current_user_name = None  # Stores the username of the currently logged-in user
 
 ADMIN_PASSWORD_FILE = "admin_password.txt"
@@ -59,6 +68,68 @@ DEFAULT_ADMIN_PASSWORD = "p@ssw0rd01"
 PRODUCTS_CSV_FILE = "POSProducts.csv"  # Name of the CSV file for products
 USERS_FILE = "users.txt"  # Name of the text file for user credentials
 PRODUCT_IMAGE_FOLDER = "product_images"  # Folder where product images are stored
+
+# --- API Integration ---
+API_SETTINGS_FILE = "api_settings.json"
+API_TOKEN_CACHE_FILE = "api_token.json"
+DEFAULT_API_SETTINGS = {
+    "base_url": "http://<url>/philtop/IMS/index.php/v1",
+    "warehouse_id": 3,
+    "customer_id": 1471,
+    "include_zero": False,
+    "login_identity": "jobapi",
+    "login_password": "replace-me",
+    "token_ttl_seconds": 604800,
+    "force_new_token_on_login": False,
+    "order_reference_prefix": "POS",
+    "default_reference": None,
+    "default_notes": "Submitted via POS application",
+    "include_unit_price": False,
+    "clear_sales_summary_after_post": False,
+    "request_timeout_seconds": 30,
+    "use_inventory_stub": True,
+    "inventory_stub_file": "inventory_stub.json",
+}
+api_settings = None
+api_token_cache = None
+
+
+
+
+def ensure_inventory_stub_file(file_path, parent=None):
+    """
+    Ensures that a JSON file exists at the given path containing the default stub payload.
+    """
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+    except Exception:
+        pass
+
+    candidate = os.path.abspath(file_path)
+    if os.path.exists(candidate):
+        return True
+
+    try:
+        with open(candidate, "w", encoding="utf-8") as fh:
+            json.dump(DEFAULT_INVENTORY_STUB_DATA, fh, indent=2)
+        return True
+    except Exception as exc:
+        show_warning("Inventory Stub", f"Failed to create stub file '{candidate}':\n{exc}", parent)
+        return False
+
+
+# --- Database configuration ---
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "user",
+    "password": "philtop",
+    "database": "pos_db",
+    "use_pure": True,
+}
+
+# --- Promo pricing support tracking ---
+PROMO_PRICE_COLUMN_AVAILABLE = None
+PROMO_PRICE_WARNING_SHOWN = False
 
 # --- New Global Variables for Auto-Saving ---
 INVENTORY_SUMMARY_FILE = "inventory_summary.csv"
@@ -69,9 +140,6 @@ PROMO_INVENTORY_FILE = "PromoInventory.csv"
 PROMO_BUNDLES_FILE = "PromoBundles.json"
 UI_PREFERENCES_FILE = "ui_preferences.json"
 BASKET_PROMOS_FILE = "BasketPromos.json"
-API_CONFIG_FILE = "api_config.json"
-API_TOKEN_CACHE_FILE = "api_token_cache.json"
-API_REQUEST_TIMEOUT = 30
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
 
@@ -86,6 +154,146 @@ RECEIPT_PRICE_COLUMN_WIDTH = 10
 RECEIPT_LEFT_COLUMN_TARGET = 24
 RECEIPT_LINE_SPACING_MULTIPLIER = 1.2
 RECEIPT_BOLD_OFFSET_PT = 0.3
+
+
+def get_db_connection(parent=None):
+    """
+    Creates and returns a MySQL connection using DB_CONFIG.
+    Limits all error UI to a single place so other functions stay lean.
+    """
+    try:
+        return mysql.connector.connect(**DB_CONFIG)
+    except Error as exc:
+        print(f"Database connection failed: {exc}")
+        show_error(
+            "Database Connection Error",
+            "Could not connect to the configured MySQL database.\n"
+            "Please verify DB_CONFIG credentials and that the MySQL server is reachable.",
+            parent,
+        )
+        return None
+
+
+def copy_image_to_library(source_path, prefix, parent=None):
+    """
+    Copies the selected image into PRODUCT_IMAGE_FOLDER with a sanitized filename.
+    Returns the stored filename or None on failure.
+    """
+    if not source_path or not os.path.exists(source_path):
+        return None
+    try:
+        os.makedirs(PRODUCT_IMAGE_FOLDER, exist_ok=True)
+        _, ext = os.path.splitext(source_path)
+        if not ext:
+            ext = ".png"
+        safe_prefix = re.sub(r"[^A-Za-z0-9_-]", "_", prefix or "img")
+        filename = f"{safe_prefix}_{int(time.time())}{ext.lower()}"
+        dest_path = os.path.join(PRODUCT_IMAGE_FOLDER, filename)
+        shutil.copy2(source_path, dest_path)
+        return filename
+    except Exception as exc:
+        show_error("Image Save Error", f"Unable to copy the selected image: {exc}", parent)
+        return None
+
+
+def ensure_promo_price_column(conn):
+    """
+    Ensures the product_promotions table has a promo_price column.
+    Attempts to add it automatically if missing; falls back gracefully otherwise.
+    """
+    global PROMO_PRICE_COLUMN_AVAILABLE
+    if PROMO_PRICE_COLUMN_AVAILABLE is not None:
+        return PROMO_PRICE_COLUMN_AVAILABLE
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW COLUMNS FROM product_promotions LIKE 'promo_price'")
+            exists = cursor.fetchone() is not None
+    except Error as exc:
+        warn_missing_promo_price_support(exc)
+        PROMO_PRICE_COLUMN_AVAILABLE = False
+        return False
+
+    if exists:
+        PROMO_PRICE_COLUMN_AVAILABLE = True
+        return True
+
+    # Try to add the column so promo pricing can match the CSV behavior.
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE product_promotions "
+                "ADD COLUMN promo_price DECIMAL(10,2) NULL"
+            )
+        conn.commit()
+        print("Added missing 'promo_price' column to product_promotions table.")
+        PROMO_PRICE_COLUMN_AVAILABLE = True
+        return True
+    except Error as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        warn_missing_promo_price_support(exc)
+        PROMO_PRICE_COLUMN_AVAILABLE = False
+        return False
+
+
+def warn_missing_promo_price_support(exc=None):
+    """
+    Logs a single warning explaining that promo-specific prices cannot be stored.
+    """
+    global PROMO_PRICE_WARNING_SHOWN
+    if PROMO_PRICE_WARNING_SHOWN:
+        return
+    message = (
+        "Warning: the 'product_promotions' table does not have a 'promo_price' column. "
+        "Promo-specific prices will fall back to the base price. "
+        "Add the column with "
+        "\"ALTER TABLE product_promotions ADD COLUMN promo_price DECIMAL(10,2) NULL\" "
+        "to enable full promo pricing support."
+    )
+    if exc:
+        message += f" (Details: {exc})"
+    print(message)
+    PROMO_PRICE_WARNING_SHOWN = True
+
+
+def ensure_bundle_image_column(conn):
+    """
+    Ensures the 'bundles' table has an image_filename column.
+    """
+    global BUNDLE_IMAGE_COLUMN_AVAILABLE
+    if BUNDLE_IMAGE_COLUMN_AVAILABLE is not None:
+        return BUNDLE_IMAGE_COLUMN_AVAILABLE
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW COLUMNS FROM bundles LIKE 'image_filename'")
+            exists = cursor.fetchone() is not None
+    except Error:
+        BUNDLE_IMAGE_COLUMN_AVAILABLE = False
+        return False
+
+    if exists:
+        BUNDLE_IMAGE_COLUMN_AVAILABLE = True
+        return True
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("ALTER TABLE bundles ADD COLUMN image_filename VARCHAR(255) NULL")
+        conn.commit()
+        print("Added missing 'image_filename' column to bundles table.")
+        BUNDLE_IMAGE_COLUMN_AVAILABLE = True
+        return True
+    except Error as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"Warning: unable to add image_filename column to bundles table: {exc}")
+        BUNDLE_IMAGE_COLUMN_AVAILABLE = False
+        return False
 
 
 def get_receipt_font_name():
@@ -175,7 +383,34 @@ def compute_receipt_layout():
         "printable_width": printable_width,
         "line_spacing": RECEIPT_LINE_SPACING_MULTIPLIER,
         "bold_offset": RECEIPT_BOLD_OFFSET_PT,
-    }
+}
+
+
+def build_eye_icon(is_visible, size=22):
+    """
+    Creates a minimalist eye icon pixmap used for password toggle buttons.
+    """
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    pen = QPen(QColor("#5c627a"), 1.6)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    outline_rect = QRectF(4, 6, size - 8, size - 12)
+    painter.drawEllipse(outline_rect)
+
+    inner_rect = QRectF(outline_rect.center().x() - 4, outline_rect.center().y() - 2, 8, 8)
+    painter.drawEllipse(inner_rect)
+
+    if not is_visible:
+        painter.drawLine(QPointF(5, 5), QPointF(size - 5, size - 5))
+
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _draw_bold_text(canvas_obj, x_pos, y_pos, text, font_name, font_size, offset_pt):
@@ -306,6 +541,68 @@ def apply_theme(app, mode):
     return effective
 
 
+def get_theme_tokens(effective_theme=None):
+    """
+    Returns a dictionary of commonly used colors for the provided theme.
+    """
+    theme = (effective_theme or current_theme_effective or "light").lower()
+    if theme == "dark":
+        return {
+            "background": "#0f172a",
+            "card_bg": "#111827",
+            "card_border": "#1f2937",
+            "title": "#f8fafc",
+            "subtitle": "#94a3b8",
+            "text": "#e2e8f0",
+            "muted": "#94a3b8",
+            "input_bg": "#1e293b",
+            "input_border": "#334155",
+            "input_text": "#f8fafc",
+            "button_primary_bg": "#2563eb",
+            "button_primary_text": "#ffffff",
+            "button_primary_hover": "#1d4ed8",
+            "button_primary_pressed": "#1e40af",
+            "button_outline_text": "#cbd5f5",
+            "button_outline_border": "#4c5a85",
+            "button_outline_hover_bg": "#1e293b",
+            "button_outline_hover_border": "#6180ff",
+            "toggle_bg": "#1e293b",
+            "toggle_hover": "#334155",
+            "table_header_bg": "#1f2937",
+            "table_header_text": "#f8fafc",
+            "table_row_bg": "#111827",
+            "table_row_alt_bg": "#182032",
+            "table_text": "#e2e8f0",
+        }
+    return {
+        "background": "#f5f7fb",
+        "card_bg": "#ffffff",
+        "card_border": "#e2e6f0",
+        "title": "#1f2a44",
+        "subtitle": "#6b7390",
+        "text": "#1f2937",
+        "muted": "#6b7390",
+        "input_bg": "#ffffff",
+        "input_border": "#ced3e3",
+        "input_text": "#1f2937",
+        "button_primary_bg": "#5c7cfa",
+        "button_primary_text": "#ffffff",
+        "button_primary_hover": "#4b6ae0",
+        "button_primary_pressed": "#3f5bc4",
+        "button_outline_text": "#4b5ecf",
+        "button_outline_border": "#c3c9e8",
+        "button_outline_hover_bg": "#eef1ff",
+        "button_outline_hover_border": "#5c7cfa",
+        "toggle_bg": "#eef1fb",
+        "toggle_hover": "#e1e6fb",
+        "table_header_bg": "#f0f3fb",
+        "table_header_text": "#47506a",
+        "table_row_bg": "#ffffff",
+        "table_row_alt_bg": "#f7f8fc",
+        "table_text": "#1f2937",
+    }
+
+
 def render_receipt_text(canvas_obj, receipt_text, layout, start_x, start_y):
     """
     Renders wrapped receipt text on the supplied canvas using the computed layout.
@@ -385,83 +682,133 @@ def show_info(title, message, parent=None):
     msg.exec()
 
 
-def join_api_url(base_url, path):
-    base = (base_url or "").rstrip("/")
-    if not base:
-        return path or ""
-    if not path:
-        return base
-    if path.lower().startswith(("http://", "https://")):
-        return path
-    return f"{base}/{path.lstrip('/')}"
+def ensure_api_settings_loaded(parent=None):
+    """
+    Loads the API settings from disk, creating a template if missing.
+    """
+    global api_settings
+    if api_settings is not None:
+        return True
 
-
-def load_api_config(parent=None):
-    if not os.path.exists(API_CONFIG_FILE):
+    if not os.path.exists(API_SETTINGS_FILE):
+        try:
+            with open(API_SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_API_SETTINGS, f, indent=2)
+        except Exception as exc:
+            show_error("API Settings Error", f"Failed to create default API settings file:\n{exc}", parent)
+            return False
         show_warning(
-            "API Configuration Missing",
-            f"The API config file '{API_CONFIG_FILE}' was not found.\n"
-            f"Create it with the required settings to enable inventory sync and invoice posting.",
-            parent
+            "API Settings Missing",
+            "Created api_settings.json with placeholder values. Update the file with valid credentials and retry.",
+            parent,
         )
-        return None
+        return False
 
     try:
-        with open(API_CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except json.JSONDecodeError as exc:
-        show_error("API Config Error", f"Failed to parse '{API_CONFIG_FILE}': {exc}", parent)
-        return None
-    except OSError as exc:
-        show_error("API Config Error", f"Unable to read '{API_CONFIG_FILE}': {exc}", parent)
-        return None
+        with open(API_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+    except Exception as exc:
+        show_error("API Settings Error", f"Failed to read api_settings.json:\n{exc}", parent)
+        return False
 
-    base_url = config.get("baseUrl", "").strip()
-    auth_path = config.get("authPath", "/auth/login")
-    inventory_path = config.get("inventoryPath", "/inventory/{warehouseId}")
-    sales_path = config.get("salesInvoicePath", "/sales-invoices")
-    warehouse_id = config.get("warehouseId")
-    login_payload = config.get("login", {})
+    if not isinstance(loaded, dict):
+        show_error("API Settings Error", "api_settings.json must contain a JSON object.", parent)
+        return False
 
-    if not base_url:
-        show_error("API Config Error", "Missing 'baseUrl' in API configuration.", parent)
-        return None
+    settings = DEFAULT_API_SETTINGS.copy()
+    settings.update(loaded)
+    settings["base_url"] = str(settings.get("base_url") or "").strip().rstrip("/")
 
-    if not warehouse_id:
-        show_error("API Config Error", "Missing 'warehouseId' in API configuration.", parent)
-        return None
+    if not settings["base_url"]:
+        show_error("API Settings Error", "The base_url in api_settings.json is required.", parent)
+        return False
 
-    if not login_payload.get("identity") or not login_payload.get("password"):
-        show_error("API Config Error", "API login credentials are incomplete.", parent)
-        return None
+    try:
+        settings["warehouse_id"] = int(settings.get("warehouse_id"))
+    except (TypeError, ValueError):
+        show_error("API Settings Error", "warehouse_id must be an integer.", parent)
+        return False
 
-    config["baseUrl"] = base_url.rstrip("/")
-    config["authUrl"] = join_api_url(config["baseUrl"], config.get("authUrl") or auth_path)
-    config["inventoryUrlTemplate"] = join_api_url(config["baseUrl"], config.get("inventoryUrlTemplate") or inventory_path)
-    config["salesInvoiceUrl"] = join_api_url(config["baseUrl"], config.get("salesInvoiceUrl") or sales_path)
+    try:
+        settings["customer_id"] = int(settings.get("customer_id"))
+    except (TypeError, ValueError):
+        show_error("API Settings Error", "customer_id must be an integer.", parent)
+        return False
 
-    return config
+    if settings["customer_id"] <= 0:
+        show_error("API Settings Error", "customer_id must be greater than zero.", parent)
+        return False
+
+    identity = str(settings.get("login_identity") or "").strip()
+    password = str(settings.get("login_password") or "").strip()
+    if not identity or not password:
+        show_error("API Settings Error", "login_identity and login_password are required.", parent)
+        return False
+
+    try:
+        ttl = int(settings.get("token_ttl_seconds") or DEFAULT_API_SETTINGS["token_ttl_seconds"])
+        settings["token_ttl_seconds"] = max(60, ttl)
+    except (TypeError, ValueError):
+        settings["token_ttl_seconds"] = DEFAULT_API_SETTINGS["token_ttl_seconds"]
+
+    try:
+        timeout = float(settings.get("request_timeout_seconds") or DEFAULT_API_SETTINGS["request_timeout_seconds"])
+        settings["request_timeout_seconds"] = max(5.0, timeout)
+    except (TypeError, ValueError):
+        settings["request_timeout_seconds"] = DEFAULT_API_SETTINGS["request_timeout_seconds"]
+
+    settings["include_zero"] = bool(settings.get("include_zero"))
+    settings["force_new_token_on_login"] = bool(settings.get("force_new_token_on_login"))
+    settings["include_unit_price"] = bool(settings.get("include_unit_price"))
+    settings["clear_sales_summary_after_post"] = bool(settings.get("clear_sales_summary_after_post"))
+    settings["use_inventory_stub"] = bool(settings.get("use_inventory_stub"))
+    settings["inventory_stub_file"] = str(settings.get("inventory_stub_file") or "").strip()
+    api_settings = settings
+    return True
+
+
+def build_api_url(*segments):
+    if not ensure_api_settings_loaded():
+        return ""
+    base = api_settings.get("base_url", "").rstrip("/")
+    path_segments = [str(seg).strip("/") for seg in segments if seg not in (None, "", False)]
+    if path_segments:
+        return f"{base}/{'/'.join(path_segments)}"
+    return base
 
 
 def load_api_token_cache():
+    global api_token_cache
+    if api_token_cache is not None:
+        return api_token_cache
     if not os.path.exists(API_TOKEN_CACHE_FILE):
-        return {}
+        return None
     try:
         with open(API_TOKEN_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return data
-    except (json.JSONDecodeError, OSError):
-        pass
-    return {}
+            api_token_cache = json.load(f)
+    except Exception:
+        api_token_cache = None
+    return api_token_cache
 
 
 def save_api_token_cache(data):
+    global api_token_cache
+    api_token_cache = data
     try:
         with open(API_TOKEN_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-    except OSError as exc:
-        print(f"Warning: Unable to persist API token cache: {exc}")
+    except Exception as exc:
+        print(f"Warning: failed to persist API token cache: {exc}")
+
+
+def clear_api_token_cache():
+    global api_token_cache
+    api_token_cache = None
+    try:
+        if os.path.exists(API_TOKEN_CACHE_FILE):
+            os.remove(API_TOKEN_CACHE_FILE)
+    except Exception as exc:
+        print(f"Warning: failed to clear API token cache: {exc}")
 
 
 def parse_api_expiry(value):
@@ -470,440 +817,316 @@ def parse_api_expiry(value):
     if isinstance(value, (int, float)):
         try:
             return datetime.fromtimestamp(value)
-        except (ValueError, OSError):
+        except Exception:
             return None
     if isinstance(value, str):
-        # Accept formats like "2025-11-03 12:48:21" or ISO strings
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
             try:
                 return datetime.strptime(value, fmt)
             except ValueError:
                 continue
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
     return None
 
 
-def ensure_api_token(config, parent=None, force_refresh=False):
-    cache_key = f"{config['baseUrl']}|{config['login']['identity']}"
-    cache = load_api_token_cache()
-    token_entry = cache.get(cache_key, {})
+def is_cached_token_valid(cache):
+    if not cache or "token" not in cache:
+        return False
+    if not ensure_api_settings_loaded():
+        return False
+    if cache.get("identity") != api_settings.get("login_identity"):
+        return False
+    if cache.get("base_url") != api_settings.get("base_url"):
+        return False
+    expires_at = parse_api_expiry(cache.get("expires_at"))
+    if not expires_at:
+        return False
+    if expires_at.tzinfo is not None:
+        expires_at = expires_at.astimezone().replace(tzinfo=None)
+    return expires_at > datetime.now() + timedelta(minutes=1)
 
-    token = token_entry.get("token")
-    expires_at = parse_api_expiry(token_entry.get("expiresAt"))
 
-    if not force_refresh and token:
-        margin = datetime.now() + timedelta(minutes=5)
-        if expires_at and expires_at > margin:
-            return token
-        if not expires_at:
-            # If expiry missing we trust token only once
-            return token
+def get_api_token(parent=None, force_refresh=False):
+    if not ensure_api_settings_loaded(parent):
+        return None
 
-    login_payload = {
-        "identity": config["login"]["identity"],
-        "password": config["login"]["password"],
-        "ttlSeconds": config["login"].get("ttlSeconds", 604800),
-        "forceNewToken": force_refresh or config["login"].get("forceNewToken", False)
+    if not force_refresh:
+        cache = load_api_token_cache()
+        if is_cached_token_valid(cache):
+            return cache["token"]
+
+    login_url = build_api_url("auth", "login")
+    if not login_url:
+        return None
+
+    payload = {
+        "identity": api_settings["login_identity"],
+        "password": api_settings["login_password"],
+        "ttlSeconds": api_settings["token_ttl_seconds"],
+        "forceNewToken": api_settings["force_new_token_on_login"],
     }
 
     try:
         response = requests.post(
-            config["authUrl"],
-            json=login_payload,
-            timeout=API_REQUEST_TIMEOUT
+            login_url,
+            json=payload,
+            timeout=api_settings.get("request_timeout_seconds", DEFAULT_API_SETTINGS["request_timeout_seconds"]),
         )
-    except requests.RequestException as exc:
-        show_error("API Login Error", f"Failed to contact login endpoint: {exc}", parent)
+    except requests.exceptions.RequestException as exc:
+        show_error("Login Failed", f"Login request failed:\n{exc}", parent)
         return None
 
     if response.status_code != 200:
-        show_error("API Login Error", f"Login failed with status {response.status_code}: {response.text}", parent)
+        show_error("Login Failed", f"API returned {response.status_code} during login:\n{response.text}", parent)
         return None
 
     try:
-        payload = response.json()
+        body = response.json()
     except ValueError as exc:
-        show_error("API Login Error", f"Invalid JSON response from login endpoint: {exc}", parent)
+        show_error("Login Failed", f"Invalid JSON received from login endpoint:\n{exc}", parent)
         return None
 
-    token_data = payload.get("data") or {}
-    token = token_data.get("token")
+    data = (body or {}).get("data") or {}
+    token = data.get("token") or body.get("token")
+    expires_at = data.get("expiresAt") or data.get("expires_at")
     if not token:
-        show_error("API Login Error", "Login response did not include a token.", parent)
+        show_error("Login Failed", "Login response did not include an access token.", parent)
         return None
 
-    expires_at = token_data.get("expiresAt") or token_data.get("expires_at")
-    cache[cache_key] = {
+    cache_payload = {
         "token": token,
-        "expiresAt": expires_at,
-        "obtainedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "expires_at": expires_at,
+        "identity": api_settings["login_identity"],
+        "base_url": api_settings["base_url"],
     }
-    save_api_token_cache(cache)
+    save_api_token_cache(cache_payload)
     return token
 
 
-def fetch_inventory_from_api(parent=None, force_refresh_token=False):
-    config = load_api_config(parent)
-    if not config:
+def api_request(method, *segments, parent=None, params=None, json_payload=None, force_refresh=False):
+    if not ensure_api_settings_loaded(parent):
         return None
 
-    token = ensure_api_token(config, parent, force_refresh=force_refresh_token)
+    token = get_api_token(parent=parent, force_refresh=force_refresh)
     if not token:
         return None
 
-    try:
-        inventory_url = config["inventoryUrlTemplate"].format(warehouseId=config["warehouseId"])
-    except KeyError:
-        show_error("API Config Error", "Inventory URL template is missing '{warehouseId}'.", parent)
-        return None
-
-    params = {}
-    include_zero = config.get("includeZero")
-    if include_zero is not None:
-        params["includeZero"] = 1 if include_zero else 0
-
-    headers = {"Authorization": f"Bearer {token}"}
+    url = build_api_url(*segments)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    if method.upper() in {"POST", "PUT", "PATCH"}:
+        headers["Content-Type"] = "application/json"
 
     try:
-        response = requests.get(
-            inventory_url,
+        response = requests.request(
+            method=method,
+            url=url,
             headers=headers,
-            params=params if params else None,
-            timeout=API_REQUEST_TIMEOUT
+            params=params,
+            json=json_payload,
+            timeout=api_settings.get("request_timeout_seconds", DEFAULT_API_SETTINGS["request_timeout_seconds"]),
         )
-    except requests.RequestException as exc:
-        show_error("Inventory Sync Error", f"Failed to reach inventory endpoint: {exc}", parent)
+    except requests.exceptions.RequestException as exc:
+        show_error("API Request Failed", f"Request to {url} failed:\n{exc}", parent)
         return None
 
-    if response.status_code == 401 and not force_refresh_token:
-        # Retry once with a fresh token
-        token = ensure_api_token(config, parent, force_refresh=True)
-        if not token:
-            return None
-        headers["Authorization"] = f"Bearer {token}"
-        try:
-            response = requests.get(
-                inventory_url,
-                headers=headers,
-                params=params if params else None,
-                timeout=API_REQUEST_TIMEOUT
-            )
-        except requests.RequestException as exc:
-            show_error("Inventory Sync Error", f"Failed to reach inventory endpoint: {exc}", parent)
-            return None
+    if response.status_code == 401 and not force_refresh:
+        clear_api_token_cache()
+        return api_request(
+            method,
+            *segments,
+            parent=parent,
+            params=params,
+            json_payload=json_payload,
+            force_refresh=True,
+        )
+
+    return response
+
+
+def load_inventory_stub_payload(parent=None):
+    if not ensure_api_settings_loaded(parent):
+        return None
+
+    file_path = api_settings.get("inventory_stub_file") or "inventory_stub.json"
+    if not ensure_inventory_stub_file(file_path, parent):
+        return deepcopy(DEFAULT_INVENTORY_STUB_DATA)
+
+    candidate = os.path.abspath(file_path)
+    try:
+        with open(candidate, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+            show_warning("Inventory Stub", f"Inventory stub file '{candidate}' does not contain a JSON object.", parent)
+    except Exception as exc:
+        show_warning("Inventory Stub", f"Failed to read inventory stub file '{candidate}':\n{exc}", parent)
+
+    return deepcopy(DEFAULT_INVENTORY_STUB_DATA)
+
+
+def fetch_inventory_payload(parent=None):
+    if not ensure_api_settings_loaded(parent):
+        return None
+
+    if api_settings.get("use_inventory_stub"):
+        return load_inventory_stub_payload(parent)
+
+    params = {"includeZero": 1 if api_settings.get("include_zero") else 0}
+    response = api_request("GET", "inventory", api_settings["warehouse_id"], parent=parent, params=params)
+    if response is None:
+        return None
 
     if response.status_code != 200:
-        show_error(
-            "Inventory Sync Error",
-            f"Inventory request failed with status {response.status_code}: {response.text}",
-            parent
-        )
+        try:
+            error_body = response.json()
+        except ValueError:
+            error_body = response.text
+        show_error("Inventory Sync Failed", f"API returned {response.status_code}:\n{error_body}", parent)
         return None
 
     try:
         payload = response.json()
     except ValueError as exc:
-        show_error("Inventory Sync Error", f"Invalid JSON received from inventory endpoint: {exc}", parent)
+        show_error("Inventory Sync Failed", f"Unable to decode response JSON:\n{exc}", parent)
         return None
 
-    if isinstance(payload, dict):
-        if payload.get("code") and payload.get("code") != 200:
-            message = payload.get("message") or "Inventory endpoint returned an error."
-            show_error("Inventory Sync Error", message, parent)
-            return None
-        items = (((payload.get("data") or {}).get("items")) or payload.get("items")) or []
-    elif isinstance(payload, list):
-        items = payload
-    else:
-        show_error("Inventory Sync Error", "Inventory response is in an unexpected format.", parent)
+    if not isinstance(payload, dict):
+        show_error("Inventory Sync Failed", "Unexpected response format from API.", parent)
         return None
 
-    if not isinstance(items, list):
-        show_error("Inventory Sync Error", "Inventory data is not a list of items.", parent)
-        return None
-
-    return {
-        "config": config,
-        "items": items
-    }
-
-
-def apply_inventory_to_products(items, products_dict):
-    updated = 0
-    missing = []
-
-    for item in items:
-        sku = str(item.get("sku") or item.get("Stock No.") or "").strip()
-        if not sku:
-            continue
-        try:
-            stock_value = int(float(item.get("stock", 0)))
-        except (TypeError, ValueError):
-            continue
-
-        variants = products_dict.get(sku)
-        if not variants:
-            missing.append(sku)
-            continue
-
-        for variant in variants:
-            if variant.get("stock") != stock_value:
-                variant["stock"] = stock_value
-                updated += 1
-
-    return updated, missing
-
-
-def build_invoice_items(cart_items):
-    invoice_items = []
-    for item in cart_items:
-        if item.get("is_freebie"):
-            continue  # Skip freebies for billing
-        sku = item.get("Stock No.") or item.get("sku") or item.get("barcode")
-        if not sku:
-            continue
-        qty = item.get("qty", 1)
-        try:
-            qty = int(qty)
-        except (ValueError, TypeError):
-            continue
-        if qty <= 0:
-            continue
-
-        try:
-            unit_price = float(item.get("price", 0))
-        except (ValueError, TypeError):
-            unit_price = 0.0
-
-        invoice_items.append({
-            "sku": sku,
-            "quantity": qty,
-            "unitPrice": unit_price if unit_price != 0 else None,
-            "remarks": item.get("name")
-        })
-    return invoice_items
-
-
-def post_sales_invoice_to_api(cart_items, order_reference, transaction_date, payment_details, parent=None):
-    config = load_api_config(parent)
-    if not config:
-        return None
-
-    if not config.get("salesInvoiceUrl"):
-        show_warning("Invoice Submission Disabled", "Sales invoice endpoint is not configured.", parent)
-        return None
-
-    customer_id = config.get("defaultCustomerId")
-    if not customer_id:
-        show_warning("Invoice Submission Skipped", "API config is missing 'defaultCustomerId'.", parent)
-        return None
-
-    invoice_items = build_invoice_items(cart_items)
-    if not invoice_items:
-        show_warning("Invoice Submission Skipped", "No billable items were found for the API payload.", parent)
-        return None
-
-    notes = config.get("defaultNotes", "")
-    if payment_details:
-        parts = []
-        cash = payment_details.get("cash", 0.0)
-        gcash = payment_details.get("gcash", 0.0)
-        if cash:
-            parts.append(f"Cash: P{cash:,.2f}")
-        if gcash:
-            parts.append(f"GCash: P{gcash:,.2f}")
-        if parts:
-            payment_summary = " | ".join(parts)
-            notes = f"{notes} | {payment_summary}".strip(" |")
-
-    if not order_reference:
-        prefix = config.get("orderReferencePrefix", "POS")
-        order_reference = f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-
-    payload = {
-        "customerId": customer_id,
-        "reference": config.get("defaultReference"),
-        "transactionDate": transaction_date,
-        "warehouseId": config.get("warehouseId"),
-        "orderReference": order_reference,
-        "notes": notes or None,
-        "items": invoice_items
-    }
-
-    token = ensure_api_token(config, parent)
-    if not token:
-        return None
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = requests.post(
-            config["salesInvoiceUrl"],
-            json=payload,
-            headers=headers,
-            timeout=API_REQUEST_TIMEOUT
-        )
-    except requests.RequestException as exc:
-        show_warning("Invoice Submission Failed", f"Unable to submit sales invoice: {exc}", parent)
-        return None
-
-    if response.status_code == 401:
-        token = ensure_api_token(config, parent, force_refresh=True)
-        if not token:
-            return None
-        headers["Authorization"] = f"Bearer {token}"
-        try:
-            response = requests.post(
-                config["salesInvoiceUrl"],
-                json=payload,
-                headers=headers,
-                timeout=API_REQUEST_TIMEOUT
-            )
-        except requests.RequestException as exc:
-            show_warning("Invoice Submission Failed", f"Unable to submit sales invoice: {exc}", parent)
-            return None
-
-    if response.status_code not in (200, 201):
-        show_warning(
-            "Invoice Submission Failed",
-            f"API responded with status {response.status_code}: {response.text}",
-            parent
-        )
-        return None
-
-    try:
-        return response.json()
-    except ValueError:
-        return {"status": "success", "raw": response.text}
+    return payload
 
 
 # --- CSV Handling Functions ---
 def load_products_from_csv(parent=None):
+    """
+    Legacy entry point kept for compatibility with the original code.
+    Now loads the complete product catalog (including promo pricing) from MySQL.
+    """
     global products, sales_summary, product_promo_columns
     products = {}
     sales_summary = {}
     product_promo_columns = []
+
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+
     try:
-        with open(PRODUCTS_CSV_FILE, mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            base_headers = ['Stock No.', 'name', 'price', 'stock', 'image_filename']
+        supports_promo_prices = ensure_promo_price_column(conn)
 
-            if not reader.fieldnames:
-                show_error("CSV Format Error", f"The '{PRODUCTS_CSV_FILE}' file is missing a header row.", parent)
-                return False
-
-            missing_headers = [field for field in base_headers if field not in reader.fieldnames]
-            if missing_headers:
-                show_error(
-                    "CSV Format Error",
-                    f"The '{PRODUCTS_CSV_FILE}' file is missing required columns: {', '.join(missing_headers)}",
-                    parent
-                )
-                return False
-
-            promo_columns = [field for field in reader.fieldnames if field not in base_headers]
-            product_promo_columns = promo_columns
-
-            for row in reader:
-                try:
-                    barcode = row['Stock No.'].strip()
-                    if not barcode:
-                        continue  # Skip empty rows
-                    name = row['name'].strip()
-                    price = float(row['price'])
-                    stock = int(row['stock'])
-                    image_filename = row.get('image_filename', '').strip()
-
-                    promo_prices = {}
-                    for promo_code in promo_columns:
-                        value = row.get(promo_code, "").strip()
-                        if not value:
-                            continue
-                        try:
-                            promo_prices[promo_code] = float(value)
-                        except ValueError:
-                            print(f"Skipping promo price for '{promo_code}' on product '{barcode}' due to invalid value: {value}")
-
-                    if barcode not in products:
-                        products[barcode] = []  # Initialize a list for variants
-
-                    products[barcode].append({
-                        "name": name,
-                        "price": price,
-                        "stock": stock,
-                        "original_stock": stock,
-                        "image_filename": image_filename,
-                        "promos": promo_prices
-                    })
-
-                    if barcode not in sales_summary:
-                        sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
-                except (ValueError, KeyError) as e:
-                    print(f"Skipping row due to data error in '{PRODUCTS_CSV_FILE}': {row} - {e}")
-
-            if not products:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                """
+                SELECT product_id, stock_no, name, price, stock, image_filename
+                FROM products
+                ORDER BY stock_no, product_id
+                """
+            )
+            product_rows = cursor.fetchall()
+            if not product_rows:
                 show_warning(
                     "No Products Found",
-                    f"The '{PRODUCTS_CSV_FILE}' file is empty or contains no valid product data after filtering errors.",
-                    parent
+                    "No products were found in the database. Please populate the 'products' table.",
+                    parent,
                 )
                 return False
-    except FileNotFoundError:
-        show_error(
-            "File Not Found",
-            f"The product CSV file '{PRODUCTS_CSV_FILE}' was not found.\nPlease ensure it exists in the same directory as the script and includes the required columns.",
-            parent
-        )
+
+            if supports_promo_prices:
+                cursor.execute(
+                    """
+                    SELECT product_id, promo_code, promo_price
+                    FROM product_promotions
+                    """
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT product_id, promo_code
+                    FROM product_promotions
+                    """
+                )
+            promo_rows = cursor.fetchall()
+
+        promos_by_product = {}
+        unique_promo_codes = []
+        for promo in promo_rows:
+            pid = promo["product_id"]
+            promo_code = promo["promo_code"]
+            promo_price = promo.get("promo_price") if supports_promo_prices else None
+            promos_by_product.setdefault(pid, {})[promo_code] = (
+                float(promo_price) if promo_price is not None else None
+            )
+            if promo_code not in unique_promo_codes:
+                unique_promo_codes.append(promo_code)
+
+        product_promo_columns = unique_promo_codes
+
+        for row in product_rows:
+            barcode = row["stock_no"]
+            raw_promos = promos_by_product.get(row["product_id"], {})
+            normalized_promos = {}
+            for code, price in raw_promos.items():
+                if price is None:
+                    normalized_promos[code] = float(row["price"])
+                else:
+                    normalized_promos[code] = float(price)
+
+            variant_entry = {
+                "name": row["name"],
+                "price": float(row["price"]),
+                "stock": int(row["stock"]),
+                "original_stock": int(row["stock"]),
+                "image_filename": row.get("image_filename", "") or "",
+                "promos": normalized_promos,
+                "_product_id": row["product_id"],
+            }
+            products.setdefault(barcode, []).append(variant_entry)
+            sales_summary.setdefault(barcode, {"qty_sold": 0, "revenue": 0.0})
+
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load products: {exc}", parent)
         return False
-    except Exception as e:
-        show_error("Error", f"An unexpected error occurred while loading products: {e}", parent)
-        return False
-    return True
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def load_promo_inventory(parent=None):
     """
-    Loads the promo inventory mapping file that defines how many base units are consumed per promo sale.
-    Expected columns: promo_code, units_per_sale
+    Loads the promo inventory mapping from the database.
     """
     global promo_inventory_map
     promo_inventory_map = {}
 
-    if not os.path.exists(PROMO_INVENTORY_FILE):
-        print(f"Promo inventory file '{PROMO_INVENTORY_FILE}' not found. Defaulting promo usage to 1 per sale.")
-        return True
-
-    try:
-        with open(PROMO_INVENTORY_FILE, mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            required_headers = ['promo_code', 'units_per_sale']
-            if not reader.fieldnames or any(field not in reader.fieldnames for field in required_headers):
-                show_error(
-                    "Promo CSV Format Error",
-                    f"The '{PROMO_INVENTORY_FILE}' file must contain the columns: promo_code, units_per_sale.",
-                    parent
-                )
-                return False
-
-            for row in reader:
-                promo_code = row.get('promo_code', '').strip()
-                units_value = row.get('units_per_sale', '').strip()
-                if not promo_code or not units_value:
-                    continue
-                try:
-                    units_per_sale = float(units_value)
-                    if units_per_sale.is_integer():
-                        units_per_sale = int(units_per_sale)
-                    promo_inventory_map[promo_code] = units_per_sale
-                except ValueError:
-                    print(f"Skipping promo inventory entry due to invalid units_per_sale value: {row}")
-    except Exception as e:
-        show_error("Error", f"An unexpected error occurred while loading promo inventory: {e}", parent)
+    conn = get_db_connection(parent)
+    if not conn:
         return False
 
-    return True
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT promo_code, units_per_sale FROM promo_types")
+            rows = cursor.fetchall()
+            for row in rows:
+                promo_inventory_map[row["promo_code"]] = row["units_per_sale"]
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load promo inventory: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def load_bundle_promos(parent=None):
@@ -913,50 +1136,176 @@ def load_bundle_promos(parent=None):
     global bundle_promos
     bundle_promos = {}
 
-    if not os.path.exists(PROMO_BUNDLES_FILE):
-        return True
-
-    try:
-        with open(PROMO_BUNDLES_FILE, mode='r', encoding='utf-8') as file:
-            data = json.load(file)
-            if isinstance(data, dict):
-                bundle_promos = data
-            elif isinstance(data, list):
-                # Support legacy list format by converting to dict
-                for entry in data:
-                    code = entry.get("code")
-                    if not code:
-                        continue
-                    bundle_promos[code] = entry
-            else:
-                bundle_promos = {}
-    except Exception as exc:
-        show_error("Error", f"Failed to load bundle promos: {exc}", parent)
+    conn = get_db_connection(parent)
+    if not conn:
         return False
 
-    return True
+    try:
+        supports_images = ensure_bundle_image_column(conn)
+        with conn.cursor(dictionary=True) as cursor:
+            select_cols = "bundle_id, bundle_code, name, price, sku"
+            if supports_images:
+                select_cols += ", image_filename"
+            cursor.execute(f"SELECT {select_cols} FROM bundles")
+            bundles = cursor.fetchall()
+            if not bundles:
+                return True
+
+            for bundle in bundles:
+                code = bundle["bundle_code"]
+                bundle_promos[code] = {
+                    "code": code,
+                    "name": bundle["name"],
+                    "price": float(bundle["price"]),
+                    "sku": bundle.get("sku"),
+                    "components": [],
+                    "image_filename": bundle.get("image_filename", "") if supports_images else "",
+                }
+                cursor.execute(
+                    """
+                    SELECT product_stock_no, variant_index, quantity
+                    FROM bundle_components
+                    WHERE bundle_id = %s
+                    """,
+                    (bundle["bundle_id"],),
+                )
+                components = cursor.fetchall()
+                for comp in components:
+                    bundle_promos[code]["components"].append(
+                        {
+                            "barcode": comp["product_stock_no"],
+                            "variant_index": int(comp["variant_index"]),
+                            "quantity": int(comp["quantity"]),
+                        }
+                    )
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load bundle promos: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def save_bundle_promos(parent=None):
     """
     Persists bundle promo definitions to disk.
     """
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+
     try:
-        with open(PROMO_BUNDLES_FILE, mode='w', encoding='utf-8') as file:
-            json.dump(bundle_promos, file, indent=2)
-    except Exception as exc:
+        supports_images = ensure_bundle_image_column(conn)
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM bundle_components")
+            cursor.execute("DELETE FROM bundles")
+
+            if supports_images:
+                insert_bundle = """
+                    INSERT INTO bundles (bundle_code, name, price, sku, image_filename)
+                    VALUES (%s, %s, %s, %s, %s)
+                """
+            else:
+                insert_bundle = """
+                    INSERT INTO bundles (bundle_code, name, price, sku)
+                    VALUES (%s, %s, %s, %s)
+                """
+            insert_component = """
+                INSERT INTO bundle_components (bundle_id, product_stock_no, variant_index, quantity)
+                VALUES (%s, %s, %s, %s)
+            """
+
+            for code, bundle in bundle_promos.items():
+                bundle_args = (
+                    code,
+                    bundle.get("name"),
+                    float(bundle.get("price", 0)),
+                    bundle.get("sku"),
+                )
+                if supports_images:
+                    bundle_args = bundle_args + (bundle.get("image_filename"),)
+                cursor.execute(insert_bundle, bundle_args)
+                bundle_id = cursor.lastrowid
+                for comp in bundle.get("components", []):
+                    cursor.execute(
+                        insert_component,
+                        (
+                            bundle_id,
+                            comp.get("barcode"),
+                            int(comp.get("variant_index", 0)),
+                            int(comp.get("quantity", 1)),
+                        ),
+                    )
+        conn.commit()
+        return True
+    except Error as exc:
+        conn.rollback()
         show_error("Save Error", f"Failed to save bundle promos: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def save_basket_promos(parent=None):
     """
-    Persists basket-size promo tiers to disk.
+    Persists basket-size promo tiers to the database.
     """
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+
     try:
-        with open(BASKET_PROMOS_FILE, mode='w', encoding='utf-8') as file:
-            json.dump({"tiers": basket_promos}, file, ensure_ascii=False, indent=4)
-    except Exception as exc:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM basket_promo_freebies")
+            cursor.execute("DELETE FROM basket_promos")
+
+            insert_promo = """
+                INSERT INTO basket_promos (code, name, threshold, message)
+                VALUES (%s, %s, %s, %s)
+            """
+            insert_freebie = """
+                INSERT INTO basket_promo_freebies (promo_id, product_stock_no, variant_index, quantity)
+                VALUES (%s, %s, %s, %s)
+            """
+
+            for promo in basket_promos:
+                cursor.execute(
+                    insert_promo,
+                    (
+                        promo.get("code"),
+                        promo.get("name"),
+                        float(promo.get("threshold", 0)),
+                        promo.get("message", ""),
+                    ),
+                )
+                promo_id = cursor.lastrowid
+                for freebie in promo.get("freebies", []):
+                    cursor.execute(
+                        insert_freebie,
+                        (
+                            promo_id,
+                            freebie.get("barcode"),
+                            int(freebie.get("variant_index", 0)),
+                            int(freebie.get("quantity", 1)),
+                        ),
+                    )
+        conn.commit()
+        return True
+    except Error as exc:
+        conn.rollback()
         show_error("Save Error", f"Failed to save basket promos: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def load_basket_promos(parent=None):
@@ -966,58 +1315,89 @@ def load_basket_promos(parent=None):
     global basket_promos
     basket_promos = []
 
-    if not os.path.exists(BASKET_PROMOS_FILE):
-        return True
-
-    try:
-        with open(BASKET_PROMOS_FILE, mode='r', encoding='utf-8') as file:
-            data = json.load(file)
-            if isinstance(data, dict):
-                entries = data.get("tiers") or data.get("promos") or list(data.values())
-            elif isinstance(data, list):
-                entries = data
-            else:
-                entries = []
-
-            for entry in entries:
-                try:
-                    threshold = float(entry.get("threshold", 0))
-                except (TypeError, ValueError):
-                    continue
-                freebies = entry.get("freebies") or []
-                if not isinstance(freebies, list) or threshold <= 0:
-                    continue
-                basket_promos.append({
-                    "code": entry.get("code") or f"BASKET_{int(threshold)}",
-                    "name": entry.get("name") or "",
-                    "threshold": threshold,
-                    "freebies": freebies,
-                    "message": entry.get("message", "")
-                })
-            basket_promos.sort(key=lambda x: x["threshold"])
-    except Exception as exc:
-        show_error("Error", f"Failed to load basket promos: {exc}", parent)
+    conn = get_db_connection(parent)
+    if not conn:
         return False
 
-    return True
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                "SELECT promo_id, code, name, threshold, message FROM basket_promos ORDER BY threshold"
+            )
+            promos = cursor.fetchall()
+            for promo in promos:
+                entry = {
+                    "code": promo["code"],
+                    "name": promo["name"],
+                    "threshold": float(promo["threshold"]),
+                    "message": promo.get("message", ""),
+                    "freebies": [],
+                }
+                cursor.execute(
+                    """
+                    SELECT product_stock_no, variant_index, quantity
+                    FROM basket_promo_freebies
+                    WHERE promo_id = %s
+                    """,
+                    (promo["promo_id"],),
+                )
+                freebies = cursor.fetchall()
+                for freebie in freebies:
+                    entry["freebies"].append(
+                        {
+                            "barcode": freebie["product_stock_no"],
+                            "variant_index": int(freebie["variant_index"]),
+                            "quantity": int(freebie["quantity"]),
+                        }
+                    )
+                basket_promos.append(entry)
+        basket_promos.sort(key=lambda x: x["threshold"])
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load basket promos: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def save_promo_inventory(parent=None):
     """
-    Persists the promo inventory mapping to disk so units per sale stay in sync with promo pricing.
+    Persists the promo inventory mapping to the database.
     """
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+
     try:
-        with open(PROMO_INVENTORY_FILE, mode='w', newline='', encoding='utf-8') as file:
-            fieldnames = ['promo_code', 'units_per_sale']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM promo_types")
+            insert_query = """
+                INSERT INTO promo_types (promo_code, units_per_sale, name)
+                VALUES (%s, %s, %s)
+            """
             for promo_code in sorted(promo_inventory_map.keys()):
-                writer.writerow({
-                    'promo_code': promo_code,
-                    'units_per_sale': promo_inventory_map[promo_code]
-                })
-    except Exception as e:
-        show_error("Save Error", f"Failed to save promo inventory: {e}", parent)
+                cursor.execute(
+                    insert_query,
+                    (
+                        promo_code,
+                        promo_inventory_map[promo_code],
+                        promo_code,
+                    ),
+                )
+        conn.commit()
+        return True
+    except Error as exc:
+        conn.rollback()
+        show_error("Save Error", f"Failed to save promo inventory: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def rebuild_product_variant_lookup():
@@ -1049,12 +1429,13 @@ def rebuild_product_variant_lookup():
                 inventory_usage = promo_inventory_map.get(promo_code, 1)
                 if promo_code not in promo_inventory_map:
                     print(f"Warning: promo code '{promo_code}' is missing from '{PROMO_INVENTORY_FILE}'. Defaulting inventory usage to 1.")
+                promo_price_value = promo_price if promo_price is not None else variant['price']
                 product_variant_lookup[promo_sku] = {
                     "sku": promo_sku,
                     "base_barcode": barcode,
                     "variant_index": index,
                     "promo_code": promo_code,
-                    "price": promo_price,
+                    "price": promo_price_value,
                     "name": variant['name'],
                     "inventory_usage": inventory_usage,
                     "image_filename": variant.get('image_filename', '')
@@ -1121,97 +1502,224 @@ def save_products_to_csv(parent=None):
     """
     Saves the current product data (including updated stock and image filename) to the CSV file.
     """
+    conn = get_db_connection(parent)
+    if not conn:
+        return
+
     try:
-        with open(PRODUCTS_CSV_FILE, mode='w', newline='', encoding='utf-8') as file:
-            base_fields = ['Stock No.', 'name', 'price', 'stock', 'image_filename']
-            fieldnames = base_fields + product_promo_columns
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
+        supports_promo_prices = ensure_promo_price_column(conn)
+        with conn.cursor() as cursor:
+            update_query = """
+                UPDATE products
+                   SET name = %s,
+                       price = %s,
+                       stock = %s,
+                       image_filename = %s
+                 WHERE product_id = %s
+            """
+            insert_query = """
+                INSERT INTO products (stock_no, name, price, stock, image_filename)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            delete_promos_query = "DELETE FROM product_promotions WHERE product_id = %s"
+            if supports_promo_prices:
+                promo_insert_query = """
+                    INSERT INTO product_promotions (product_id, promo_code, promo_price)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE promo_price = VALUES(promo_price)
+                """
+            else:
+                warn_missing_promo_price_support()
+                promo_insert_query = """
+                    INSERT INTO product_promotions (product_id, promo_code)
+                    VALUES (%s, %s)
+                """
+
             for barcode, variants in products.items():
                 for variant in variants:
-                    row = {
-                        'Stock No.': barcode,
-                        'name': variant['name'],
-                        'price': variant['price'],
-                        'stock': variant['stock'],
-                        'image_filename': variant.get('image_filename', '')
-                    }
-                    promos = variant.get('promos', {})
-                    for promo_code in product_promo_columns:
-                        value = promos.get(promo_code, "")
-                        row[promo_code] = value
-                    writer.writerow(row)
-    except Exception as e:
-        show_error("Save Error", f"Failed to save product data to CSV: {e}", parent)
+                    product_id = variant.get("_product_id")
+                    name = variant["name"]
+                    price = float(variant["price"])
+                    stock = int(variant["stock"])
+                    image_filename = variant.get("image_filename") or None
+
+                    if product_id:
+                        cursor.execute(
+                            update_query,
+                            (name, price, stock, image_filename, product_id),
+                        )
+                    else:
+                        cursor.execute(
+                            insert_query,
+                            (barcode, name, price, stock, image_filename),
+                        )
+                        product_id = cursor.lastrowid
+                        variant["_product_id"] = product_id
+
+                    cursor.execute(delete_promos_query, (product_id,))
+                    promos = variant.get("promos") or {}
+                    if supports_promo_prices:
+                        for promo_code, promo_price in promos.items():
+                            cursor.execute(
+                                promo_insert_query,
+                                (product_id, promo_code, float(promo_price)),
+                            )
+                    else:
+                        for promo_code in promos.keys():
+                            cursor.execute(
+                                promo_insert_query,
+                                (product_id, promo_code),
+                            )
+
+        conn.commit()
+    except Error as exc:
+        conn.rollback()
+        show_error("Save Error", f"Failed to persist products to the database: {exc}", parent)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # --- User Management Functions ---
 def load_users(parent=None):
     """
-    Loads usernames and passwords from the USERS_FILE.
-    If the file doesn't exist or is empty, it creates a default 'cashier' user.
+    Loads usernames and password hashes from the database.
+    Falls back to creating a default cashier account if table is empty.
     """
     global users_data
     users_data = {}
-    if os.path.exists(USERS_FILE):
-        try:
-            with open(USERS_FILE, 'r', encoding='utf-8') as f:
-                for line in f:
-                    parts = line.strip().split(',', 1)  # Split only on the first comma
-                    if len(parts) == 2:
-                        username, password = parts
-                        users_data[username] = password
-                    else:
-                        print(f"Skipping malformed line in {USERS_FILE}: {line.strip()}")
-        except Exception as e:
-            show_error("Error", f"Failed to load user data from '{USERS_FILE}': {e}", parent)
 
-    # Ensure there's at least one user if file was empty or didn't exist
-    if not users_data:
-        users_data["cashier"] = "cashier123"  # Default password for cashier
-        save_users(parent)
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT username, password_hash, is_admin FROM users")
+            records = cursor.fetchall()
+            for row in records:
+                users_data[row["username"]] = {
+                    "password_hash": row["password_hash"],
+                    "is_admin": bool(row.get("is_admin", 0)),
+                }
+
+            if not users_data:
+                default_hash = generate_password_hash("cashier123")
+                cursor.execute(
+                    """
+                    INSERT INTO users (username, password_hash, is_admin)
+                    VALUES (%s, %s, %s)
+                    """,
+                    ("cashier", default_hash, False),
+                )
+                conn.commit()
+                users_data["cashier"] = {
+                    "password_hash": default_hash,
+                    "is_admin": False,
+                }
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load users: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def save_users(parent=None):
     """
-    Saves the current usernames and passwords to the USERS_FILE.
+    Persists the in-memory users_data mapping to the database.
     """
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+
     try:
-        with open(USERS_FILE, 'w', newline='', encoding='utf-8') as f:
-            for username, password in users_data.items():
-                f.write(f"{username},{password}\n")
-    except Exception as e:
-        show_error("Error", f"Failed to save user data to '{USERS_FILE}': {e}", parent)
+        with conn.cursor() as cursor:
+            upsert_query = """
+                INSERT INTO users (username, password_hash, is_admin)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    password_hash = VALUES(password_hash),
+                    is_admin = VALUES(is_admin)
+            """
+            for username, entry in users_data.items():
+                cursor.execute(
+                    upsert_query,
+                    (
+                        username,
+                        entry["password_hash"],
+                        bool(entry.get("is_admin", False)),
+                    ),
+                )
+        conn.commit()
+        return True
+    except Error as exc:
+        conn.rollback()
+        show_error("Database Error", f"Failed to save users: {exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 
 def save_tendered_amounts():
-    """Saves the total cash and GCash tendered amounts to a JSON file."""
+    """Persists tendered totals to the tendered_totals table."""
     global total_cash_tendered, total_gcash_tendered
+    conn = get_db_connection()
+    if not conn:
+        return
     try:
-        with open(TENDERED_AMOUNTS_FILE, 'w', encoding='utf-8') as f:
-            json.dump({"cash": total_cash_tendered, "gcash": total_gcash_tendered}, f, ensure_ascii=False, indent=4)
-        print("Tendered amounts saved successfully.")
-    except Exception as e:
-        print(f"Error saving tendered amounts: {e}")
+        with conn.cursor() as cursor:
+            query = """
+                INSERT INTO tendered_totals (payment_method, total_amount)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE total_amount = VALUES(total_amount)
+            """
+            cursor.execute(query, ("cash", float(total_cash_tendered)))
+            cursor.execute(query, ("gcash", float(total_gcash_tendered)))
+        conn.commit()
+    except Error as exc:
+        conn.rollback()
+        print(f"Error saving tendered amounts: {exc}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 def load_tendered_amounts():
-    """Loads the total cash and GCash tendered amounts from a JSON file."""
+    """Loads tendered totals from the tendered_totals table."""
     global total_cash_tendered, total_gcash_tendered
+    conn = get_db_connection()
+    if not conn:
+        total_cash_tendered = 0.0
+        total_gcash_tendered = 0.0
+        return
     try:
-        with open(TENDERED_AMOUNTS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            total_cash_tendered = data.get("cash", 0.0)
-            total_gcash_tendered = data.get("gcash", 0.0)
-        print("Tendered amounts loaded successfully.")
-    except FileNotFoundError:
-        print("Tendered amounts file not found. Starting with zero amounts.")
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT payment_method, total_amount FROM tendered_totals")
+            rows = cursor.fetchall()
+            totals = {row["payment_method"]: float(row["total_amount"]) for row in rows}
+            total_cash_tendered = totals.get("cash", 0.0)
+            total_gcash_tendered = totals.get("gcash", 0.0)
+    except Error as exc:
+        print(f"Error loading tendered amounts: {exc}")
         total_cash_tendered = 0.0
         total_gcash_tendered = 0.0
-    except Exception as e:
-        print(f"Error loading tendered amounts: {e}")
-        total_cash_tendered = 0.0
-        total_gcash_tendered = 0.0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
     
 
 # Place this function at the top of your script, before any class definitions
@@ -1237,113 +1745,146 @@ def save_receipt_pdf(receipt_text, file_path):
     c.save()
 
 def save_inventory_summary():
-    """Saves the inventory summary to a CSV file."""
-    try:
-        with open(INVENTORY_SUMMARY_FILE, mode='w', newline='', encoding='utf-8') as file:
-            fieldnames = ['Stock No.', 'name', 'price', 'stock', 'original_stock', 'qty_sold', 'revenue']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            for barcode, variants in products.items():
-                for variant in variants:
-                    # Get qty_sold and revenue from sales_summary, default to 0 if not found
-                    qty_sold = sales_summary.get(barcode, {}).get('qty_sold', 0)
-                    revenue = sales_summary.get(barcode, {}).get('revenue', 0.0)
-                    writer.writerow({
-                        'Stock No.': barcode,
-                        'name': variant['name'],
-                        'price': variant['price'],
-                        'stock': variant['stock'],
-                        'original_stock': variant['original_stock'],
-                        'qty_sold': qty_sold,
-                        'revenue': revenue
-                    })
-        print("Inventory summary saved successfully.")
-    except Exception as e:
-        print(f"Error saving inventory summary: {e}")
+    """Inventory data is persisted in MySQL; nothing to export."""
+    return True
+
 
 def save_sales_summary():
-    """Saves the sales summary to a JSON file."""
-    try:
-        with open(SALES_SUMMARY_FILE, 'w', encoding='utf-8') as file:
-            json.dump(sales_summary, file, indent=4)
-        print("Sales summary saved successfully.")
-    except Exception as e:
-        print(f"Error saving sales summary: {e}")
+    """Sales data is stored in MySQL; no file save required."""
+    return True
+
 
 def save_receipts_archive():
-    """Saves the receipts archive to a JSON file."""
-    try:
-        with open(RECEIPTS_ARCHIVE_FILE, 'w', encoding='utf-8') as file:
-            json.dump(receipts_archive, file, indent=4)
-        print("Receipts archive saved successfully.")
-    except Exception as e:
-        print(f"Error saving receipts archive: {e}")
+    """Receipts are persisted in MySQL; no file save required."""
+    return True
         
 def load_inventory_summary():
     """
-    Loads the inventory summary from a CSV file without overriding the authoritative
-    product data that was loaded from POSProducts.csv.
+    Builds the inventory summary snapshot from the products and sales_items tables.
     """
-    global sales_summary
-    sales_summary = sales_summary or {}
+    global inventory_summary, sales_summary
+    inventory_summary = {}
+    conn = get_db_connection()
+    if not conn:
+        return False
 
     try:
-        with open(INVENTORY_SUMMARY_FILE, mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                barcode = row['Stock No.'].strip()
-                qty_sold = int(row.get('qty_sold', 0) or 0)
-                revenue = float(row.get('revenue', 0) or 0)
-
-                if barcode in products:
-                    variant = products[barcode][0]
-                    original_stock_value = row.get('original_stock')
-                    if original_stock_value is not None:
-                        try:
-                            variant['original_stock'] = int(original_stock_value)
-                        except ValueError:
-                            pass
-                else:
-                    print(f"Warning: inventory summary references missing product '{barcode}'. Skipping stock restore.")
-
-                sales_summary[barcode] = {
-                    "qty_sold": qty_sold,
-                    "revenue": revenue
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT product_id, stock_no, name, price, stock FROM products")
+            product_rows = cursor.fetchall()
+            product_id_to_stock = {}
+            for row in product_rows:
+                product_id_to_stock[row["product_id"]] = row["stock_no"]
+                inventory_summary[row["stock_no"]] = {
+                    "name": row["name"],
+                    "price": float(row["price"]),
+                    "stock": int(row["stock"]),
+                    "original_stock": int(row["stock"]),
+                    "qty_sold": 0,
+                    "revenue": 0.0,
                 }
-        print("Inventory summary loaded successfully.")
-    except FileNotFoundError:
-        print("Inventory summary file not found. Starting with empty data.")
-    except Exception as e:
-        print(f"Error loading inventory summary: {e}")
+
+            cursor.execute(
+                """
+                SELECT product_id, SUM(quantity) AS qty_sold, SUM(total_price) AS revenue
+                  FROM sales_items
+                 WHERE is_freebie = FALSE
+              GROUP BY product_id
+                """
+            )
+            sales_rows = cursor.fetchall()
+            for row in sales_rows:
+                stock_no = product_id_to_stock.get(row["product_id"])
+                if not stock_no or stock_no not in inventory_summary:
+                    continue
+                qty = int(row["qty_sold"] or 0)
+                revenue = float(row["revenue"] or 0.0)
+                entry = inventory_summary[stock_no]
+                entry["qty_sold"] = qty
+                entry["revenue"] = revenue
+                entry["original_stock"] += qty
+                sales_summary[stock_no] = {"qty_sold": qty, "revenue": revenue}
+
+                # Update the primary variant snapshot so UI summaries stay accurate
+                if stock_no in products and products[stock_no]:
+                    products[stock_no][0]["original_stock"] = entry["original_stock"]
+
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to build inventory summary: {exc}")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def load_sales_summary():
-    """Loads the sales summary from a JSON file."""
+    """Rebuilds sales_summary from the sales_items table."""
     global sales_summary
+    sales_summary = {}
+    conn = get_db_connection()
+    if not conn:
+        return False
+
     try:
-        with open(SALES_SUMMARY_FILE, 'r', encoding='utf-8') as file:
-            sales_summary = json.load(file)
-        print("Sales summary loaded successfully.")
-    except FileNotFoundError:
-        print("Sales summary file not found. Starting with empty data.")
-        sales_summary = {}
-    except Exception as e:
-        print(f"Error loading sales summary: {e}")
-        sales_summary = {}
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                """
+                SELECT p.stock_no, SUM(si.quantity) AS qty_sold, SUM(si.total_price) AS revenue
+                  FROM sales_items si
+                  JOIN products p ON si.product_id = p.product_id
+                 WHERE si.is_freebie = FALSE
+              GROUP BY p.stock_no
+                """
+            )
+            rows = cursor.fetchall()
+            for row in rows:
+                sales_summary[row["stock_no"]] = {
+                    "qty_sold": int(row["qty_sold"] or 0),
+                    "revenue": float(row["revenue"] or 0.0),
+                }
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load sales summary: {exc}")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def load_receipts_archive():
-    """Loads the receipts archive from a JSON file."""
-    global receipts_archive
+    """Loads receipts from the receipts table and sets the next counters."""
+    global receipts_archive, current_sales_number, current_transaction_number
+    receipts_archive = {}
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    max_sales_no = 0
     try:
-        with open(RECEIPTS_ARCHIVE_FILE, 'r', encoding='utf-8') as file:
-            receipts_archive = json.load(file)
-        print("Receipts archive loaded successfully.")
-    except FileNotFoundError:
-        print("Receipts archive file not found. Starting with empty archive.")
-        receipts_archive = {}
-    except Exception as e:
-        print(f"Error loading receipts archive: {e}")
-        receipts_archive = {}
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT sales_key, receipt_text FROM receipts")
+            rows = cursor.fetchall()
+            for row in rows:
+                key = row["sales_key"]
+                receipts_archive[key] = row["receipt_text"]
+                match = re.search(r"SALES#: (\d+)", key)
+                if match:
+                    max_sales_no = max(max_sales_no, int(match.group(1)))
+        current_sales_number = max_sales_no + 1
+        current_transaction_number = max_sales_no + 1
+        return True
+    except Error as exc:
+        show_error("Database Error", f"Failed to load receipts archive: {exc}")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # Ensure the ReceiptDialog class follows after the function definition
 class ReceiptDialog(QDialog):
@@ -1395,68 +1936,93 @@ class ReceiptDialog(QDialog):
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Login")
-        self.setFixedSize(400, 280)
+        self.setWindowTitle("Sunnyware POS Login")
+        self.setFixedSize(420, 360)
         self.current_user_name = None
 
         self.all_usernames_list = list(users_data.keys())
 
-        layout = QVBoxLayout()
+        self.password_visible = False
 
-        lbl_username = QLabel("Username:")
-        lbl_username.setFont(QFont("Arial", 10))
-        layout.addWidget(lbl_username)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(32, 26, 32, 26)
+        outer_layout.setSpacing(14)
 
-        self.combo_username = QComboBox()
+        title = QLabel("Welcome Back", self)
+        title.setObjectName("LoginTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer_layout.addWidget(title)
+
+        subtitle = QLabel("Sign in to continue to Sunnyware POS", self)
+        subtitle.setObjectName("LoginSubtitle")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer_layout.addWidget(subtitle)
+
+        card = QFrame(self)
+        card.setObjectName("LoginCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(14)
+
+        lbl_username = QLabel("Username", card)
+        card_layout.addWidget(lbl_username)
+
+        self.combo_username = QComboBox(card)
         self.combo_username.setEditable(True)
         self.combo_username.addItems(self.all_usernames_list)
         if self.all_usernames_list:
             self.combo_username.setCurrentIndex(0)
-        self.combo_username.setFixedWidth(300)
-        layout.addWidget(self.combo_username)
+        card_layout.addWidget(self.combo_username)
 
-        lbl_password = QLabel("Password:")
-        lbl_password.setFont(QFont("Arial", 10))
-        layout.addWidget(lbl_password)
+        lbl_password = QLabel("Password", card)
+        card_layout.addWidget(lbl_password)
 
         password_layout = QHBoxLayout()
-        self.entry_password = QLineEdit()
+        password_layout.setSpacing(4)
+        self.entry_password = QLineEdit(card)
         self.entry_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.entry_password.setFixedWidth(300)
         password_layout.addWidget(self.entry_password)
 
-        self.btn_toggle_password = QPushButton("Show")
-        self.btn_toggle_password.setFixedWidth(50)
+        self.btn_toggle_password = QToolButton(card)
+        self.btn_toggle_password.setObjectName("EyeButton")
+        self.btn_toggle_password.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_password.setIcon(build_eye_icon(False))
+        self.btn_toggle_password.setIconSize(QSize(20, 20))
+        self.btn_toggle_password.setCheckable(True)
         self.btn_toggle_password.clicked.connect(self.toggle_password_visibility)
         password_layout.addWidget(self.btn_toggle_password)
 
-        layout.addLayout(password_layout)
+        card_layout.addLayout(password_layout)
 
-        btn_login = QPushButton("Login")
-        btn_login.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        outer_layout.addWidget(card)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(16)
+
+        btn_login = QPushButton("Login", self)
+        btn_login.setObjectName("PrimaryButton")
         btn_login.clicked.connect(self.do_login)
-        btn_login.setFixedWidth(150)
-        layout.addWidget(btn_login, alignment=Qt.AlignmentFlag.AlignCenter)
+        button_row.addWidget(btn_login)
 
-        btn_create_account = QPushButton("Create Account")
-        btn_create_account.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        btn_create_account = QPushButton("Create Account", self)
+        btn_create_account.setObjectName("SecondaryButton")
         btn_create_account.clicked.connect(self.create_account_flow)
-        btn_create_account.setFixedWidth(150)
-        layout.addWidget(btn_create_account, alignment=Qt.AlignmentFlag.AlignCenter)
+        button_row.addWidget(btn_create_account)
 
-        self.setLayout(layout)
+        outer_layout.addLayout(button_row)
 
         # Connect completer-like behavior manually
         self.combo_username.lineEdit().textEdited.connect(self.update_username_options)
         self.combo_username.activated.connect(self.handle_combobox_selection)
+        self.combo_username.setFocus()
+        self.apply_theme_styles()
 
     def toggle_password_visibility(self):
-        if self.entry_password.echoMode() == QLineEdit.EchoMode.Password:
-            self.entry_password.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_toggle_password.setText("Hide")
-        else:
-            self.entry_password.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_toggle_password.setText("Show")
+        self.password_visible = not self.password_visible
+        self.entry_password.setEchoMode(
+            QLineEdit.EchoMode.Normal if self.password_visible else QLineEdit.EchoMode.Password
+        )
+        self.btn_toggle_password.setIcon(build_eye_icon(self.password_visible))
 
     def update_username_options(self, text):
         typed_text = text.lower()
@@ -1472,6 +2038,85 @@ class LoginDialog(QDialog):
 
     def handle_combobox_selection(self, index):
         self.combo_username.setCurrentIndex(index)
+    def apply_theme_styles(self):
+        tokens = get_theme_tokens()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {tokens['background']};
+            }}
+            QLabel#LoginTitle {{
+                font-size: 20px;
+                font-weight: 600;
+                color: {tokens['title']};
+            }}
+            QLabel#LoginSubtitle {{
+                font-size: 12px;
+                color: {tokens['subtitle']};
+            }}
+            QLabel {{
+                font-size: 12px;
+                color: {tokens['text']};
+            }}
+            QFrame#LoginCard {{
+                background: {tokens['card_bg']};
+                border-radius: 14px;
+                border: 1px solid {tokens['card_border']};
+            }}
+            QLineEdit, QComboBox {{
+                padding: 8px 10px;
+                border-radius: 6px;
+                border: 1px solid {tokens['input_border']};
+                font-size: 13px;
+                color: {tokens['input_text']};
+                background-color: {tokens['input_bg']};
+            }}
+            QLineEdit:focus, QComboBox:focus {{
+                border: 1px solid {tokens['button_primary_bg']};
+            }}
+            QPushButton#PrimaryButton {{
+                background-color: {tokens['button_primary_bg']};
+                color: {tokens['button_primary_text']};
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: 600;
+            }}
+            QPushButton#PrimaryButton:hover {{
+                background-color: {tokens['button_primary_hover']};
+            }}
+            QPushButton#PrimaryButton:pressed {{
+                background-color: {tokens['button_primary_pressed']};
+            }}
+            QPushButton#SecondaryButton {{
+                background-color: transparent;
+                color: {tokens['button_outline_text']};
+                border: 1px solid {tokens['button_outline_border']};
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: 600;
+            }}
+            QPushButton#SecondaryButton:hover {{
+                background-color: {tokens['button_outline_hover_bg']};
+                border-color: {tokens['button_outline_hover_border']};
+            }}
+            QPushButton#ToggleButton {{
+                background-color: {tokens['toggle_bg']};
+                color: {tokens['text']};
+                border-radius: 6px;
+                padding: 6px 12px;
+            }}
+            QPushButton#ToggleButton:hover {{
+                background-color: {tokens['toggle_hover']};
+            }}
+            QToolButton#EyeButton {{
+                background-color: transparent;
+                border: none;
+                padding: 0;
+            }}
+            QToolButton#EyeButton:hover {{
+                background-color: rgba(92, 124, 250, 0.12);
+                border-radius: 10px;
+            }}
+        """)
 
     def do_login(self):
         username = self.combo_username.currentText().strip()
@@ -1482,7 +2127,9 @@ class LoginDialog(QDialog):
         if username not in users_data:
             show_error("Login Error", "User  not found.", self)
             return
-        if users_data[username] == password:
+        stored = users_data.get(username, {})
+        stored_hash = stored.get("password_hash")
+        if stored_hash and check_password_hash(stored_hash, password):
             self.current_user_name = username
             self.accept()
         else:
@@ -1510,6 +2157,8 @@ class CreateAccountDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Create New Account")
         self.setFixedSize(400, 380)
+        self.new_password_visible = False
+        self.confirm_password_visible = False
 
         layout = QVBoxLayout()
 
@@ -1524,12 +2173,16 @@ class CreateAccountDialog(QDialog):
         lbl_new_password.setFont(QFont("Arial", 10))
         layout.addWidget(lbl_new_password)
         pass_layout = QHBoxLayout()
+        pass_layout.setSpacing(4)
         self.entry_new_password = QLineEdit()
         self.entry_new_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.entry_new_password.setFixedWidth(300)
         pass_layout.addWidget(self.entry_new_password)
-        self.btn_toggle_new_password = QPushButton("Show")
-        self.btn_toggle_new_password.setFixedWidth(50)
+        self.btn_toggle_new_password = QToolButton()
+        self.btn_toggle_new_password.setObjectName("EyeButton")
+        self.btn_toggle_new_password.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_new_password.setIcon(build_eye_icon(False))
+        self.btn_toggle_new_password.setIconSize(QSize(20, 20))
         self.btn_toggle_new_password.clicked.connect(self.toggle_password_visibility_new)
         pass_layout.addWidget(self.btn_toggle_new_password)
         layout.addLayout(pass_layout)
@@ -1538,39 +2191,42 @@ class CreateAccountDialog(QDialog):
         lbl_confirm_password.setFont(QFont("Arial", 10))
         layout.addWidget(lbl_confirm_password)
         conf_pass_layout = QHBoxLayout()
+        conf_pass_layout.setSpacing(4)
         self.entry_confirm_password = QLineEdit()
         self.entry_confirm_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.entry_confirm_password.setFixedWidth(300)
         conf_pass_layout.addWidget(self.entry_confirm_password)
-        self.btn_toggle_confirm_password = QPushButton("Show")
-        self.btn_toggle_confirm_password.setFixedWidth(50)
+        self.btn_toggle_confirm_password = QToolButton()
+        self.btn_toggle_confirm_password.setObjectName("EyeButton")
+        self.btn_toggle_confirm_password.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_confirm_password.setIcon(build_eye_icon(False))
+        self.btn_toggle_confirm_password.setIconSize(QSize(20, 20))
         self.btn_toggle_confirm_password.clicked.connect(self.toggle_password_visibility_confirm)
         conf_pass_layout.addWidget(self.btn_toggle_confirm_password)
         layout.addLayout(conf_pass_layout)
 
         btn_create_account = QPushButton("Create Account")
-        btn_create_account.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        btn_create_account.setObjectName("PrimaryButton")
         btn_create_account.clicked.connect(self.save_new_user)
         btn_create_account.setFixedWidth(150)
         layout.addWidget(btn_create_account, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.setLayout(layout)
+        self.apply_theme_styles()
 
     def toggle_password_visibility_new(self):
-        if self.entry_new_password.echoMode() == QLineEdit.EchoMode.Password:
-            self.entry_new_password.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_toggle_new_password.setText("Hide")
-        else:
-            self.entry_new_password.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_toggle_new_password.setText("Show")
+        self.new_password_visible = not self.new_password_visible
+        self.entry_new_password.setEchoMode(
+            QLineEdit.EchoMode.Normal if self.new_password_visible else QLineEdit.EchoMode.Password
+        )
+        self.btn_toggle_new_password.setIcon(build_eye_icon(self.new_password_visible))
 
     def toggle_password_visibility_confirm(self):
-        if self.entry_confirm_password.echoMode() == QLineEdit.EchoMode.Password:
-            self.entry_confirm_password.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_toggle_confirm_password.setText("Hide")
-        else:
-            self.entry_confirm_password.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_toggle_confirm_password.setText("Show")
+        self.confirm_password_visible = not self.confirm_password_visible
+        self.entry_confirm_password.setEchoMode(
+            QLineEdit.EchoMode.Normal if self.confirm_password_visible else QLineEdit.EchoMode.Password
+        )
+        self.btn_toggle_confirm_password.setIcon(build_eye_icon(self.confirm_password_visible))
 
     def save_new_user(self):
         new_username = self.entry_new_username.text().strip()
@@ -1600,75 +2256,268 @@ class CreateAccountDialog(QDialog):
             show_error("Password Policy", "Password must contain at least one number.", self)
             return
 
-        users_data[new_username] = new_password  # Store the plaintext password
+        users_data[new_username] = {
+            "password_hash": generate_password_hash(new_password),
+            "is_admin": False
+        }
         save_users(self)
 
         show_info("Success", f"User  '{new_username}' created successfully. You can now login with this account.", self)
         self.accept()
 
+    def apply_theme_styles(self):
+        tokens = get_theme_tokens()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {tokens['background']};
+                color: {tokens['text']};
+            }}
+            QLabel {{
+                color: {tokens['text']};
+                font-size: 12px;
+            }}
+            QLineEdit {{
+                padding: 8px 10px;
+                border-radius: 6px;
+                border: 1px solid {tokens['input_border']};
+                background-color: {tokens['input_bg']};
+                color: {tokens['input_text']};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {tokens['button_primary_bg']};
+            }}
+            QPushButton#PrimaryButton {{
+                background-color: {tokens['button_primary_bg']};
+                color: {tokens['button_primary_text']};
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: 600;
+            }}
+            QPushButton#PrimaryButton:hover {{
+                background-color: {tokens['button_primary_hover']};
+            }}
+            QPushButton#PrimaryButton:pressed {{
+                background-color: {tokens['button_primary_pressed']};
+            }}
+            QToolButton#EyeButton {{
+                background-color: transparent;
+                border: none;
+                padding: 0;
+            }}
+            QToolButton#EyeButton:hover {{
+                background-color: rgba(92, 124, 250, 0.12);
+                border-radius: 10px;
+            }}
+        """)
+
 
 class InventoryManagementDialog(QDialog):
     def __init__(self, products, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Inventory Management - Product Stock")
-        self.resize(700, 450)
+        self.setWindowTitle("Inventory Management")
+        self.resize(880, 620)
         self.products = products  # Store the products dictionary
 
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(28, 20, 28, 20)
+        main_layout.setSpacing(12)
 
-        title = QLabel("Current Product Stocks")
-        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        layout.addWidget(title)
+        title = QLabel("Inventory Dashboard", self)
+        title.setObjectName("InventoryTitle")
+        main_layout.addWidget(title)
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Stock No.", "Product Name", "Stock Left"])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table)
+        subtitle = QLabel("Monitor stocks at a glance, then deep-dive into bundles, promos, or basket rewards without leaving this dashboard.", self)
+        subtitle.setObjectName("InventorySubtitle")
+        subtitle.setWordWrap(True)
+        main_layout.addWidget(subtitle)
 
-        # Add buttons for syncing/importing inventory data and management actions
-        btn_layout = QHBoxLayout()
-        self.btn_sync_api = QPushButton("Sync from API")
-        self.btn_sync_api.clicked.connect(self.sync_inventory_from_api)
-        btn_layout.addWidget(self.btn_sync_api)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setStyleSheet("QTabWidget::pane { border: none; }")
+        main_layout.addWidget(self.tabs)
 
-        self.btn_import = QPushButton("Import Excel")
-        self.btn_import.clicked.connect(self.import_excel)
-        btn_layout.addWidget(self.btn_import)
+        self.tabs.addTab(self.build_inventory_tab(), "Inventory Overview")
+        self.tabs.addTab(self.build_bundles_tab(), "Bundles")
+        self.tabs.addTab(self.build_promos_tab(), "Promos")
+        self.tabs.addTab(self.build_basket_tab(), "Basket Rewards")
 
-        self.btn_replenish = QPushButton("Replenish Stock")
-        self.btn_replenish.clicked.connect(self.replenish_stock)
-        btn_layout.addWidget(self.btn_replenish)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_btn = button_box.button(QDialogButtonBox.StandardButton.Close)
+        close_btn.setText("Close Dashboard")
+        close_btn.setObjectName("AccentButton")
+        close_btn.clicked.connect(self.reject)
+        main_layout.addWidget(button_box, alignment=Qt.AlignmentFlag.AlignRight)
 
-        self.btn_export = QPushButton("Export Summary")
-        self.btn_export.clicked.connect(self.export_summary)
-        btn_layout.addWidget(self.btn_export)
-
-        self.btn_manage_promos = QPushButton("Manage Promos")
-        self.btn_manage_promos.clicked.connect(self.manage_promos)
-        btn_layout.addWidget(self.btn_manage_promos)
-
-        self.btn_manage_bundles = QPushButton("Manage Bundles")
-        self.btn_manage_bundles.clicked.connect(self.manage_bundles)
-        btn_layout.addWidget(self.btn_manage_bundles)
-
-        self.btn_manage_basket = QPushButton("Manage Basket Rewards")
-        self.btn_manage_basket.clicked.connect(self.manage_basket_promos)
-        btn_layout.addWidget(self.btn_manage_basket)
-
-        self.btn_close = QPushButton("Close")
-        self.btn_close.clicked.connect(self.close)
-        btn_layout.addWidget(self.btn_close)
-
-        layout.addLayout(btn_layout)
-
+        self.apply_theme_styles()
         self.populate_table()
+        self.populate_bundle_table()
+        self.populate_promos_table()
+        self.populate_basket_table()
+
+    def build_inventory_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame(self)
+        card.setObjectName("InventoryCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(16)
+
+        self.inventory_table = QTableWidget(0, 3, card)
+        self.inventory_table.setHorizontalHeaderLabels(["Stock No.", "Product Name", "Stock Left"])
+        self.inventory_table.horizontalHeader().setStretchLastSection(True)
+        self.inventory_table.setAlternatingRowColors(True)
+        card_layout.addWidget(self.inventory_table)
+
+        button_grid = QGridLayout()
+        button_grid.setSpacing(12)
+
+        btn_import = QPushButton("Import Excel", self)
+        btn_import.clicked.connect(self.import_excel)
+        button_grid.addWidget(btn_import, 0, 0)
+
+        btn_replenish = QPushButton("Replenish Stock", self)
+        btn_replenish.clicked.connect(self.replenish_stock)
+        button_grid.addWidget(btn_replenish, 0, 1)
+
+        btn_export = QPushButton("Export Summary", self)
+        btn_export.clicked.connect(self.export_summary)
+        button_grid.addWidget(btn_export, 0, 2)
+
+        btn_sync_api = QPushButton("Sync via API", self)
+        btn_sync_api.clicked.connect(self.sync_inventory_from_api)
+        button_grid.addWidget(btn_sync_api, 1, 0)
+
+        btn_post_sales = QPushButton("Post Sales Invoice", self)
+        btn_post_sales.clicked.connect(self.post_sales_invoice)
+        button_grid.addWidget(btn_post_sales, 1, 1, 1, 2)
+
+        card_layout.addLayout(button_grid)
+        layout.addWidget(card)
+        return tab
+
+    def build_bundles_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame(self)
+        card.setObjectName("ManagementCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(16)
+
+        header = QLabel("Bundle Library")
+        header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        card_layout.addWidget(header)
+
+        self.bundle_table = QTableWidget(0, 5, card)
+        self.bundle_table.setHorizontalHeaderLabels(["Code", "Name", "Price", "Components", "SKU"])
+        self.bundle_table.horizontalHeader().setStretchLastSection(True)
+        self.bundle_table.setAlternatingRowColors(True)
+        card_layout.addWidget(self.bundle_table)
+
+        control_row = QHBoxLayout()
+        control_row.addStretch()
+        btn_manage = QPushButton("Create / Edit Bundles", self)
+        btn_manage.setObjectName("AccentButton")
+        btn_manage.clicked.connect(self.manage_bundles)
+        control_row.addWidget(btn_manage)
+        btn_remove = QPushButton("Remove Bundle", self)
+        btn_remove.clicked.connect(self.show_remove_bundle_dialog)
+        control_row.addWidget(btn_remove)
+        btn_refresh = QPushButton("Refresh List", self)
+        btn_refresh.clicked.connect(self.populate_bundle_table)
+        control_row.addWidget(btn_refresh)
+        card_layout.addLayout(control_row)
+
+        layout.addWidget(card)
+        return tab
+
+    def build_promos_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame(self)
+        card.setObjectName("ManagementCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(16)
+
+        header = QLabel("Promo Programs")
+        header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        card_layout.addWidget(header)
+
+        self.promos_table = QTableWidget(0, 3, card)
+        self.promos_table.setHorizontalHeaderLabels(["Promo Code", "Units per Sale", "Linked Items"])
+        self.promos_table.horizontalHeader().setStretchLastSection(True)
+        self.promos_table.setAlternatingRowColors(True)
+        card_layout.addWidget(self.promos_table)
+
+        control_row = QHBoxLayout()
+        control_row.addStretch()
+        btn_manage = QPushButton("Open Promo Builder", self)
+        btn_manage.setObjectName("AccentButton")
+        btn_manage.clicked.connect(self.manage_promos)
+        control_row.addWidget(btn_manage)
+        btn_remove = QPushButton("Remove Promo", self)
+        btn_remove.clicked.connect(self.show_remove_promo_dialog)
+        control_row.addWidget(btn_remove)
+        btn_refresh = QPushButton("Refresh List", self)
+        btn_refresh.clicked.connect(self.populate_promos_table)
+        control_row.addWidget(btn_refresh)
+        card_layout.addLayout(control_row)
+
+        layout.addWidget(card)
+        return tab
+
+    def build_basket_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame(self)
+        card.setObjectName("ManagementCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(16)
+
+        header = QLabel("Basket Rewards")
+        header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        card_layout.addWidget(header)
+
+        self.basket_table = QTableWidget(0, 4, card)
+        self.basket_table.setHorizontalHeaderLabels(["Code", "Name", "Threshold", "Freebies"])
+        self.basket_table.horizontalHeader().setStretchLastSection(True)
+        self.basket_table.setAlternatingRowColors(True)
+        card_layout.addWidget(self.basket_table)
+
+        control_row = QHBoxLayout()
+        control_row.addStretch()
+        btn_manage = QPushButton("Manage Basket Rewards", self)
+        btn_manage.setObjectName("AccentButton")
+        btn_manage.clicked.connect(self.manage_basket_promos)
+        control_row.addWidget(btn_manage)
+        btn_remove = QPushButton("Remove Reward", self)
+        btn_remove.clicked.connect(self.show_remove_basket_dialog)
+        control_row.addWidget(btn_remove)
+        btn_refresh = QPushButton("Refresh List", self)
+        btn_refresh.clicked.connect(self.populate_basket_table)
+        control_row.addWidget(btn_refresh)
+        card_layout.addLayout(control_row)
+
+        layout.addWidget(card)
+        return tab
 
     def manage_promos(self):
         dlg = PromoManagementDialog(self.products, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             # Table content may not change, but refresh to reflect any potential data updates.
             self.populate_table()
+            self.populate_promos_table()
             parent = self.parent()
             if parent and hasattr(parent, "refresh_product_search_options"):
                 parent.refresh_product_search_options()
@@ -1676,6 +2525,8 @@ class InventoryManagementDialog(QDialog):
     def manage_bundles(self):
         dlg = BundlePromoDialog(self.products, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            load_bundle_promos(self)
+            self.populate_bundle_table()
             parent = self.parent()
             if parent and hasattr(parent, "refresh_product_search_options"):
                 parent.refresh_product_search_options()
@@ -1684,6 +2535,7 @@ class InventoryManagementDialog(QDialog):
         dlg = BasketPromoDialog(self.products, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             load_basket_promos(self)
+            self.populate_basket_table()
 
     def replenish_stock(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Replenish Stock from Excel", "", "Excel Files (*.xlsx *.xls)")
@@ -1729,41 +2581,318 @@ class InventoryManagementDialog(QDialog):
 
 
     def populate_table(self):
-        self.table.setRowCount(0)  # Clear existing rows
+        if not hasattr(self, "inventory_table"):
+            return
+        self.inventory_table.setRowCount(0)  # Clear existing rows
 
         # Sort products by name
         sorted_products = sorted(self.products.items(), key=lambda item: item[1][0]["name"].lower())
 
         for barcode, variants in sorted_products:
             for variant in variants:
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                self.table.setItem(row, 0, QTableWidgetItem(barcode))
-                self.table.setItem(row, 1, QTableWidgetItem(variant["name"]))
-                self.table.setItem(row, 2, QTableWidgetItem(str(variant["stock"])))
+                row = self.inventory_table.rowCount()
+                self.inventory_table.insertRow(row)
+                self.inventory_table.setItem(row, 0, QTableWidgetItem(barcode))
+                self.inventory_table.setItem(row, 1, QTableWidgetItem(variant["name"]))
+                self.inventory_table.setItem(row, 2, QTableWidgetItem(str(variant["stock"])))
 
-    def sync_inventory_from_api(self):
-        result = fetch_inventory_from_api(self)
-        if not result:
+    def populate_bundle_table(self):
+        if not hasattr(self, "bundle_table"):
+            return
+        if not load_bundle_promos(self):
+            return
+        self.bundle_table.setRowCount(0)
+        for code in sorted(bundle_promos.keys()):
+            bundle = bundle_promos[code]
+            row = self.bundle_table.rowCount()
+            self.bundle_table.insertRow(row)
+            self.bundle_table.setItem(row, 0, QTableWidgetItem(code))
+            self.bundle_table.setItem(row, 1, QTableWidgetItem(bundle.get("name", "")))
+            price_item = QTableWidgetItem(f"P{float(bundle.get('price', 0.0)):.2f}")
+            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.bundle_table.setItem(row, 2, price_item)
+            components = bundle.get("components") or []
+            comp_summary = ", ".join(f"{comp.get('quantity', 1)}x {comp.get('barcode', '-')}" for comp in components) or "-"
+            self.bundle_table.setItem(row, 3, QTableWidgetItem(comp_summary))
+            self.bundle_table.setItem(row, 4, QTableWidgetItem(bundle.get("sku", "")))
+
+    def show_remove_bundle_dialog(self):
+        if not bundle_promos:
+            show_info("No Bundles", "There are currently no bundles to remove.", self)
             return
 
-        items = result["items"]
-        updated_count, missing_skus = apply_inventory_to_products(items, self.products)
-        unique_missing = sorted(set(missing_skus))
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Remove Bundles")
+        dlg.resize(360, 320)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Select bundle(s) to remove:", dlg))
 
-        save_products_to_csv(self)
-        self.populate_table()
+        list_widget = QListWidget(dlg)
+        list_widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        for code in sorted(bundle_promos.keys()):
+            name = bundle_promos[code].get("name", "")
+            item = QListWidgetItem(f"{code} — {name}")
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
 
-        message = f"Stocks updated for {updated_count} product variants."
-        if unique_missing:
-            limited = ", ".join(unique_missing[:5])
-            remaining = len(unique_missing) - min(len(unique_missing), 5)
-            if remaining > 0:
-                limited += f", ... (+{remaining} more)"
-            message += f"\nIgnored {len(unique_missing)} unknown stock numbers: {limited}"
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dlg)
+        remove_btn = button_box.addButton("Remove Selected", QDialogButtonBox.ButtonRole.AcceptRole)
+        remove_btn.setEnabled(False)
+        layout.addWidget(button_box)
 
-        show_info("Inventory Sync Complete", message, self)
+        def update_state():
+            remove_btn.setEnabled(bool(list_widget.selectedItems()))
 
+        def do_remove():
+            selected = list_widget.selectedItems()
+            if not selected:
+                return
+            codes = [item.data(Qt.ItemDataRole.UserRole) for item in selected]
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Removal",
+                "Remove the following bundle(s)?\n- " + "\n- ".join(codes),
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            removed = 0
+            for code in codes:
+                if bundle_promos.pop(code, None) is not None:
+                    removed += 1
+            if removed:
+                save_bundle_promos(self)
+                self.populate_bundle_table()
+                show_info("Bundles Removed", f"Removed {removed} bundle(s).", self)
+            dlg.accept()
+
+        list_widget.itemSelectionChanged.connect(update_state)
+        remove_btn.clicked.connect(do_remove)
+        button_box.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def populate_promos_table(self):
+        if not hasattr(self, "promos_table"):
+            return
+        if not load_promo_inventory(self):
+            return
+        self.promos_table.setRowCount(0)
+        for code in sorted(promo_inventory_map.keys()):
+            units = promo_inventory_map.get(code, 1)
+            linked = 0
+            for variants in self.products.values():
+                for variant in variants:
+                    promos = variant.get("promos") or {}
+                    if code in promos:
+                        linked += 1
+            row = self.promos_table.rowCount()
+            self.promos_table.insertRow(row)
+            self.promos_table.setItem(row, 0, QTableWidgetItem(code))
+            self.promos_table.setItem(row, 1, QTableWidgetItem(str(units)))
+            self.promos_table.setItem(row, 2, QTableWidgetItem(str(linked)))
+
+    def show_remove_promo_dialog(self):
+        if not promo_inventory_map:
+            show_info("No Promos", "There are currently no promos to remove.", self)
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Remove Promos")
+        dlg.resize(360, 320)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Select promo code(s) to remove:", dlg))
+
+        list_widget = QListWidget(dlg)
+        list_widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        for code in sorted(promo_inventory_map.keys()):
+            units = promo_inventory_map.get(code, 1)
+            item = QListWidgetItem(f"{code} — {units} unit(s)")
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dlg)
+        remove_btn = button_box.addButton("Remove Selected", QDialogButtonBox.ButtonRole.AcceptRole)
+        remove_btn.setEnabled(False)
+        layout.addWidget(button_box)
+
+        def update_state():
+            remove_btn.setEnabled(bool(list_widget.selectedItems()))
+
+        def do_remove():
+            selected = list_widget.selectedItems()
+            if not selected:
+                return
+            codes = [item.data(Qt.ItemDataRole.UserRole) for item in selected]
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Removal",
+                "Remove the following promo code(s)?\n- " + "\n- ".join(codes),
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            removed = 0
+            for code in codes:
+                if promo_inventory_map.pop(code, None) is not None:
+                    removed += 1
+                try:
+                    product_promo_columns.remove(code)
+                except ValueError:
+                    pass
+                for variants in self.products.values():
+                    for variant in variants:
+                        promos = variant.get("promos")
+                        if promos and code in promos:
+                            promos.pop(code, None)
+            if removed:
+                save_promo_inventory(self)
+                save_products_to_csv(self)
+                self.populate_promos_table()
+                self.populate_table()
+                show_info("Promos Removed", f"Removed {removed} promo(s).", self)
+            dlg.accept()
+
+        list_widget.itemSelectionChanged.connect(update_state)
+        remove_btn.clicked.connect(do_remove)
+        button_box.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def populate_basket_table(self):
+        if not hasattr(self, "basket_table"):
+            return
+        if not load_basket_promos(self):
+            return
+        self.basket_table.setRowCount(0)
+        for entry in basket_promos:
+            row = self.basket_table.rowCount()
+            self.basket_table.insertRow(row)
+            self.basket_table.setItem(row, 0, QTableWidgetItem(entry.get("code", "")))
+            self.basket_table.setItem(row, 1, QTableWidgetItem(entry.get("name", "")))
+            threshold_item = QTableWidgetItem(f"P{float(entry.get('threshold', 0.0)):.2f}")
+            threshold_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.basket_table.setItem(row, 2, threshold_item)
+            freebies = entry.get("freebies") or []
+            freebies_summary = ", ".join(
+                f"{freebie.get('quantity', 1)}x {freebie.get('barcode', '')}" for freebie in freebies
+            ) or "-"
+            self.basket_table.setItem(row, 3, QTableWidgetItem(freebies_summary))
+
+    def show_remove_basket_dialog(self):
+        if not basket_promos:
+            show_info("No Basket Rewards", "There are currently no basket rewards to remove.", self)
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Remove Basket Rewards")
+        dlg.resize(360, 320)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Select reward(s) to remove:", dlg))
+
+        list_widget = QListWidget(dlg)
+        list_widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        for entry in basket_promos:
+            code = entry.get("code", "")
+            name = entry.get("name", "")
+            item = QListWidgetItem(f"{code} — {name}")
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dlg)
+        remove_btn = button_box.addButton("Remove Selected", QDialogButtonBox.ButtonRole.AcceptRole)
+        remove_btn.setEnabled(False)
+        layout.addWidget(button_box)
+
+        def update_state():
+            remove_btn.setEnabled(bool(list_widget.selectedItems()))
+
+        def do_remove():
+            selected = list_widget.selectedItems()
+            if not selected:
+                return
+            codes = [item.data(Qt.ItemDataRole.UserRole) for item in selected]
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Removal",
+                "Remove the following reward(s)?\n- " + "\n- ".join(codes),
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            before = len(basket_promos)
+            basket_promos[:] = [entry for entry in basket_promos if entry.get("code") not in codes]
+            removed = before - len(basket_promos)
+            if removed > 0:
+                save_basket_promos(self)
+                self.populate_basket_table()
+                show_info("Rewards Removed", f"Removed {removed} reward(s).", self)
+            dlg.accept()
+
+        list_widget.itemSelectionChanged.connect(update_state)
+        remove_btn.clicked.connect(do_remove)
+        button_box.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def apply_theme_styles(self):
+        tokens = get_theme_tokens()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {tokens['background']};
+                color: {tokens['text']};
+            }}
+            QLabel#InventoryTitle {{
+                font-size: 18px;
+                font-weight: 600;
+                color: {tokens['title']};
+            }}
+            QLabel#InventorySubtitle {{
+                font-size: 12px;
+                color: {tokens['subtitle']};
+            }}
+            QFrame#InventoryCard, QFrame#ManagementCard {{
+                background: {tokens['card_bg']};
+                border-radius: 10px;
+                border: 1px solid {tokens['card_border']};
+            }}
+            QTableWidget {{
+                border: none;
+                gridline-color: {tokens['card_border']};
+                background-color: {tokens['table_row_bg']};
+                alternate-background-color: {tokens['table_row_alt_bg']};
+                color: {tokens['table_text']};
+            }}
+            QHeaderView::section {{
+                background: {tokens['table_header_bg']};
+                border: none;
+                padding: 8px;
+                font-weight: 600;
+                color: {tokens['table_header_text']};
+            }}
+            QPushButton {{
+                background-color: {tokens['card_bg']};
+                border: 1px solid {tokens['button_outline_border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: {tokens['button_outline_text']};
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                border-color: {tokens['button_outline_hover_border']};
+                color: {tokens['button_primary_hover']};
+                background-color: {tokens['button_outline_hover_bg']};
+            }}
+            QPushButton#AccentButton {{
+                background-color: {tokens['button_primary_bg']};
+                color: {tokens['button_primary_text']};
+                border: none;
+            }}
+            QPushButton#AccentButton:hover {{
+                background-color: {tokens['button_primary_hover']};
+            }}
+            QTabBar::tab {{
+                padding: 8px 16px;
+                margin-right: 4px;
+            }}
+        """)
     def import_excel(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Excel File", "", "Excel Files (*.xlsx *.xls)")
         if file_path:
@@ -1800,6 +2929,158 @@ class InventoryManagementDialog(QDialog):
             except Exception as e:
                 show_error("Import Error", f"Failed to import Excel file: {e}", self)
 
+    def sync_inventory_from_api(self):
+        if not ensure_api_settings_loaded(self):
+            return
+
+        payload = fetch_inventory_payload(self)
+        if payload is None:
+            return
+
+        if payload.get("code") not in (200, 201):
+            message = payload.get("message") or payload.get("error") or json.dumps(payload)
+            show_error("Inventory Sync Failed", f"Inventory endpoint responded with code {payload.get('code')}:\n{message}", self)
+            return
+
+        items = ((payload.get("data") or {}).get("items") or [])
+        if not items:
+            show_info("Inventory Sync", "API response did not include any inventory items.", self)
+            return
+
+        updated_count = 0
+        ignored_count = 0
+        for entry in items:
+            sku = str(entry.get("sku") or "").strip()
+            if not sku:
+                continue
+            stock_value = entry.get("stock")
+            try:
+                stock_int = int(stock_value)
+            except (TypeError, ValueError):
+                continue
+
+            if sku in self.products:
+                for variant in self.products[sku]:
+                    if variant.get("stock") != stock_int:
+                        variant["stock"] = stock_int
+                        if variant.get("original_stock", 0) < stock_int:
+                            variant["original_stock"] = stock_int
+                        updated_count += 1
+            else:
+                ignored_count += 1
+
+        if updated_count == 0 and ignored_count == 0:
+            show_info("Inventory Sync", "No local products were matched to the API response.", self)
+            return
+
+        save_products_to_csv(self)
+        rebuild_product_variant_lookup()
+        parent = self.parent()
+        if parent and hasattr(parent, "refresh_product_search_options"):
+            parent.refresh_product_search_options()
+        if parent and hasattr(parent, "clear_product_display"):
+            parent.clear_product_display()
+        self.populate_table()
+        show_info(
+            "Inventory Sync",
+            f"Stocks updated for {updated_count} product variant(s).\nIgnored {ignored_count} item(s) not found in the local catalog.",
+            self,
+        )
+        if api_settings.get("use_inventory_stub"):
+            show_info(
+                "Stub Data Used",
+                "Inventory sync loaded stub data. Disable 'use_inventory_stub' in api_settings.json to call the live API.",
+                self,
+            )
+
+    def post_sales_invoice(self):
+        global sales_summary, total_cash_tendered, total_gcash_tendered
+        if not ensure_api_settings_loaded(self):
+            return
+
+        if not sales_summary:
+            show_info("Sales Invoice", "No sales data available to post.", self)
+            return
+
+        items = []
+        for sku, data in sales_summary.items():
+            qty = int(data.get("qty_sold") or 0)
+            if qty <= 0:
+                continue
+            revenue = float(data.get("revenue") or 0.0)
+            unit_price = revenue / qty if qty and api_settings.get("include_unit_price") else None
+            variant_name = sku
+            variants = self.products.get(sku)
+            if variants:
+                variant_name = variants[0].get("name", sku)
+
+            item_entry = {
+                "sku": sku,
+                "quantity": qty,
+                "unitPrice": round(unit_price, 2) if unit_price is not None else None,
+                "remarks": variant_name,
+            }
+            items.append(item_entry)
+
+        if not items:
+            show_info("Sales Invoice", "No qualifying sales items found to post.", self)
+            return
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        prefix = api_settings.get("order_reference_prefix") or "POS"
+        order_reference = f"{prefix}-{today_str}"
+        notes_value = api_settings.get("default_notes")
+        payload = {
+            "customerId": api_settings["customer_id"],
+            "reference": api_settings.get("default_reference"),
+            "transactionDate": today_str,
+            "warehouseId": api_settings["warehouse_id"],
+            "orderReference": order_reference,
+            "notes": notes_value if notes_value is not None else "",
+            "items": items,
+        }
+
+        response = api_request("POST", "sales-invoices", parent=self, json_payload=payload)
+        if response is None:
+            return
+
+        if response.status_code not in (200, 201):
+            try:
+                error_body = response.json()
+            except ValueError:
+                error_body = response.text
+            show_error("Sales Invoice Error", f"API returned {response.status_code}:\n{error_body}", self)
+            return
+
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        if body.get("code") not in (200, 201):
+            message = body.get("message") or body.get("error") or response.text
+            show_error("Sales Invoice Error", f"API responded with code {body.get('code')}:\n{message}", self)
+            return
+
+        data = body.get("data") or {}
+        ref_no = data.get("ref_no") or data.get("id")
+        amount_due = data.get("amount_due")
+        message_lines = ["Sales invoice created successfully."]
+        if ref_no:
+            message_lines.append(f"Reference: {ref_no}")
+        if amount_due is not None:
+            message_lines.append(f"Amount Due: {amount_due}")
+        show_info("Sales Invoice Posted", "\n".join(message_lines), self)
+
+        if api_settings.get("clear_sales_summary_after_post"):
+            sales_summary = {}
+            total_cash_tendered = 0.0
+            total_gcash_tendered = 0.0
+            save_sales_summary()
+            parent = self.parent()
+            if parent and hasattr(parent, "sales_summary"):
+                parent.sales_summary = sales_summary
 
 
     def export_summary(self):
@@ -2093,6 +3374,8 @@ class BundlePromoDialog(QDialog):
         self.resize(950, 620)
         self.products = products_ref
         self.row_widgets = []
+        self.bundle_image_filename = ""
+        self.bundle_image_source_path = None
 
         main_layout = QVBoxLayout(self)
 
@@ -2138,6 +3421,24 @@ class BundlePromoDialog(QDialog):
 
         self.bundle_base_total_label = QLabel("Base total: P0.00")
         header_layout.addWidget(self.bundle_base_total_label, 2, 2, 1, 2)
+
+        image_row = QHBoxLayout()
+        image_row.setSpacing(12)
+        self.bundle_image_label = QLabel("No Image")
+        self.bundle_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bundle_image_label.setFixedSize(160, 120)
+        self.bundle_image_label.setStyleSheet("border: 1px dashed #94a3b8; background-color: #f8fafc;")
+        image_row.addWidget(self.bundle_image_label)
+
+        controls_col = QVBoxLayout()
+        self.bundle_image_file_label = QLabel("No image selected")
+        controls_col.addWidget(self.bundle_image_file_label)
+        self.btn_select_bundle_image = QPushButton("Choose Image…")
+        self.btn_select_bundle_image.clicked.connect(self.choose_bundle_image)
+        controls_col.addWidget(self.btn_select_bundle_image)
+        image_row.addLayout(controls_col)
+
+        header_layout.addLayout(image_row, 3, 0, 1, 4)
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
@@ -2206,6 +3507,7 @@ class BundlePromoDialog(QDialog):
 
         self.bundle_code_combo.currentTextChanged.connect(self.load_bundle_data)
         self.load_bundle_data(self.bundle_code_combo.currentText())
+        self.apply_theme_styles()
 
     def clear_form(self):
         self.bundle_code_combo.blockSignals(True)
@@ -2217,6 +3519,9 @@ class BundlePromoDialog(QDialog):
         self.bundle_price_spin.setValue(0.0)
         self.bundle_price_spin.blockSignals(False)
         self.bundle_price_spin.setProperty("custom_edit", False)
+        self.bundle_image_filename = ""
+        self.bundle_image_source_path = None
+        self.update_bundle_image_preview()
         for row_info in self.row_widgets:
             row_info["qty_spin"].blockSignals(True)
             row_info["qty_spin"].setValue(0)
@@ -2257,6 +3562,33 @@ class BundlePromoDialog(QDialog):
         if self.bundle_price_spin.hasFocus():
             self.bundle_price_spin.setProperty("custom_edit", True)
 
+    def update_bundle_image_preview(self, source_path=None, filename=None):
+        path = None
+        if source_path and os.path.exists(source_path):
+            path = source_path
+        elif filename:
+            candidate = os.path.join(PRODUCT_IMAGE_FOLDER, filename)
+            if os.path.exists(candidate):
+                path = candidate
+        if path:
+            pixmap = QPixmap(path).scaled(
+                self.bundle_image_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+            self.bundle_image_label.setPixmap(pixmap)
+            self.bundle_image_label.setText("")
+            self.bundle_image_file_label.setText(os.path.basename(path))
+        else:
+            self.bundle_image_label.clear()
+            self.bundle_image_label.setText("No Image")
+            self.bundle_image_file_label.setText("No image selected")
+
+    def choose_bundle_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Bundle Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if not file_path:
+            return
+        self.bundle_image_source_path = file_path
+        self.update_bundle_image_preview(source_path=file_path)
+
     def load_bundle_data(self, bundle_code):
         bundle_code = (bundle_code or "").strip()
         bundle = bundle_promos.get(bundle_code, {})
@@ -2266,6 +3598,9 @@ class BundlePromoDialog(QDialog):
         self.bundle_price_spin.setValue(float(bundle.get("price", 0)))
         self.bundle_price_spin.blockSignals(False)
         self.bundle_price_spin.setProperty("custom_edit", False)
+        self.bundle_image_filename = bundle.get("image_filename", "")
+        self.bundle_image_source_path = None
+        self.update_bundle_image_preview(filename=self.bundle_image_filename)
 
         component_map = {}
         for component in bundle.get("components", []):
@@ -2354,13 +3689,20 @@ class BundlePromoDialog(QDialog):
 
         bundle_name = self.bundle_name_edit.text().strip() or f"Bundle {bundle_code}"
         sku = f"BUNDLE_{bundle_code}"
-
+        image_filename = self.bundle_image_filename or ""
+        if self.bundle_image_source_path:
+            new_filename = copy_image_to_library(self.bundle_image_source_path, f"bundle_{bundle_code}", self)
+            if new_filename:
+                image_filename = new_filename
+                self.bundle_image_source_path = None
+        self.bundle_image_filename = image_filename
         bundle_promos[bundle_code] = {
             "code": bundle_code,
             "name": bundle_name,
             "price": round(bundle_price, 2),
             "components": selected_components,
-            "sku": sku
+            "sku": sku,
+            "image_filename": image_filename,
         }
 
         save_bundle_promos(self)
@@ -2371,6 +3713,50 @@ class BundlePromoDialog(QDialog):
 
         show_info("Bundle Saved", f"Bundle '{bundle_code}' saved successfully.", self)
         self.accept()
+
+    def apply_theme_styles(self):
+        tokens = get_theme_tokens()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {tokens['background']};
+                color: {tokens['text']};
+            }}
+            QLabel {{
+                color: {tokens['text']};
+            }}
+            QLineEdit, QDoubleSpinBox {{
+                padding: 6px 8px;
+                border: 1px solid {tokens['input_border']};
+                border-radius: 4px;
+                background-color: {tokens['input_bg']};
+                color: {tokens['input_text']};
+            }}
+            QLineEdit:focus, QDoubleSpinBox:focus {{
+                border: 1px solid {tokens['button_primary_bg']};
+            }}
+            QTableWidget {{
+                border: 1px solid {tokens['card_border']};
+                background-color: {tokens['table_row_bg']};
+                color: {tokens['table_text']};
+            }}
+            QHeaderView::section {{
+                background: {tokens['table_header_bg']};
+                color: {tokens['table_header_text']};
+                border: none;
+                padding: 6px;
+            }}
+            QPushButton {{
+                background-color: {tokens['card_bg']};
+                border: 1px solid {tokens['button_outline_border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+                color: {tokens['button_outline_text']};
+            }}
+            QPushButton:hover {{
+                border-color: {tokens['button_outline_hover_border']};
+                background-color: {tokens['button_outline_hover_bg']};
+            }}
+        """)
 
 
 class BasketPromoDialog(QDialog):
@@ -2723,6 +4109,9 @@ class POSMainWindow(QMainWindow):
         self.current_effective_theme = current_theme_effective
         self.theme_actions = {}
         self.theme_action_group = None
+        self.current_display_barcode = None
+        self.current_display_variant_index = None
+        self.current_display_bundle_code = None
 
         self.init_ui()
         self.initialize_customer_queue()
@@ -2876,6 +4265,11 @@ class POSMainWindow(QMainWindow):
         self.label_product_image.setMinimumSize(200, 150) # Minimum size for the image area
         self.label_product_image.setStyleSheet("border: 1px solid black; background-color: white;")
         info_layout.addWidget(self.label_product_image, alignment=Qt.AlignmentFlag.AlignCenter) # Added directly to info_layout
+        self.btn_change_image = QPushButton("Change Product Image")
+        self.btn_change_image.clicked.connect(self.change_current_product_image)
+        self.btn_change_image.setEnabled(False)
+        info_layout.addWidget(self.btn_change_image, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.update_change_image_button_state()
 
         # Product Details Section
         self.label_product_name_display = QLabel("PRODUCT NAME: ")
@@ -3150,6 +4544,18 @@ class POSMainWindow(QMainWindow):
         sku = item.get('Stock No.')
         base_barcode = item.get('base_stock_no', sku)
         variant_index = item.get('variant_index', 0)
+        if item.get("bundle_components"):
+            component_summary = ", ".join(
+                f"{comp.get('quantity', 1)}x {comp.get('name', comp.get('barcode', ''))}"
+                for comp in item.get("bundle_components", [])
+            ) or "No components"
+            self.label_product_name_display.setText(f"Bundle: {item['name']}")
+            self.label_product_price_display.setText(f"Price: P{item['price']:.2f}")
+            self.label_product_stock_display.setText("Bundle Item")
+            self.label_product_barcode_number.setText(f"Includes: {component_summary}")
+            self.display_product_image(item.get("image_filename"))
+            self.set_display_context(None, None, item.get('bundle_code'))
+            return
         variants = products.get(base_barcode, [])
 
         variant = variants[variant_index] if variant_index < len(variants) else (variants[0] if variants else None)
@@ -3159,6 +4565,7 @@ class POSMainWindow(QMainWindow):
             self.label_product_stock_display.setText(f"Stock: {variant['stock']}")
             self.label_product_barcode_number.setText(f"Stock No.: {sku}")
             self.display_product_image(variant.get('image_filename'))
+            self.set_display_context(base_barcode, variant_index, item.get('bundle_code'))
         else:
             self.clear_product_display()
 
@@ -3517,6 +4924,7 @@ class POSMainWindow(QMainWindow):
         self.label_product_stock_display.setText("STOCK: ")
         self.label_product_barcode_number.setText("STOCK NO.: ")
         self.label_product_image.setPixmap(self.default_pixmap)
+        self.set_display_context()
 
 
     def display_product_image(self, image_filename):
@@ -3540,6 +4948,52 @@ class POSMainWindow(QMainWindow):
             else:
                 print(f"Product image file not found: {image_path}")
         self.label_product_image.setPixmap(self.default_pixmap)
+
+    def set_display_context(self, barcode=None, variant_index=None, bundle_code=None):
+        self.current_display_barcode = barcode
+        self.current_display_variant_index = variant_index
+        self.current_display_bundle_code = bundle_code
+        self.update_change_image_button_state()
+
+    def update_change_image_button_state(self):
+        if not hasattr(self, "btn_change_image") or self.btn_change_image is None:
+            return
+        allow_product_change = bool(self.current_display_barcode is not None)
+        self.btn_change_image.setEnabled(allow_product_change)
+        if allow_product_change:
+            self.btn_change_image.setToolTip("Select a new image for this product.")
+        else:
+            self.btn_change_image.setToolTip("Scan or select a product to change its image.")
+
+    def change_current_product_image(self):
+        if not self.current_display_barcode:
+            show_info("Select Product", "Scan or select a product first to update its image.", self)
+            return
+        variants = products.get(self.current_display_barcode)
+        if not variants:
+            show_error("Update Image", "Current product could not be found in memory.", self)
+            return
+        variant_index = self.current_display_variant_index or 0
+        if variant_index >= len(variants):
+            variant_index = 0
+        variant = variants[variant_index]
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Product Image", "", "Images (*.png *.jpg *.jpeg *.bmp)"
+        )
+        if not file_path:
+            return
+
+        new_filename = copy_image_to_library(file_path, self.current_display_barcode, self)
+        if not new_filename:
+            return
+
+        variant["image_filename"] = new_filename
+        save_products_to_csv(self)
+        rebuild_product_variant_lookup()
+        self.display_product_image(new_filename)
+        self.set_display_context(self.current_display_barcode, variant_index, None)
+        show_info("Image Updated", "Product image has been updated.", self)
 
     def add_item_to_cart_by_sku(self, sku, show_not_found=True):
         global current_item_count, current_discount
@@ -3607,7 +5061,8 @@ class POSMainWindow(QMainWindow):
                 "promo_code": lookup.get('bundle_code'),
                 "bundle_code": lookup.get('bundle_code'),
                 "bundle_components": components_copy,
-                "original_unit_price": lookup['price']
+                "original_unit_price": lookup['price'],
+                "image_filename": lookup.get('image_filename'),
             }
 
             self.cart.append(item)
@@ -3624,6 +5079,7 @@ class POSMainWindow(QMainWindow):
             self.label_product_stock_display.setText(f"Bundle Stock: {stock_caption}")
             self.label_product_barcode_number.setText(f"Includes: {component_summary}")
             self.display_product_image(lookup.get("image_filename"))
+            self.set_display_context(None, None, item.get("bundle_code"))
 
             current_item_count = 1
             current_discount = 0.0
@@ -3651,7 +5107,8 @@ class POSMainWindow(QMainWindow):
             "variant_index": variant_index,
             "inventory_usage": lookup.get('inventory_usage', 1),
             "promo_code": lookup.get('promo_code'),
-            "original_unit_price": lookup['price']
+            "original_unit_price": lookup['price'],
+            "image_filename": variant.get('image_filename'),
         }
 
         self.cart.append(item)
@@ -3662,6 +5119,7 @@ class POSMainWindow(QMainWindow):
         self.label_product_stock_display.setText(f"Stock: {variant['stock']}")
         self.label_product_barcode_number.setText(f"Stock No.: {lookup['sku']}")
         self.display_product_image(variant.get('image_filename'))
+        self.set_display_context(base_barcode, variant_index, None)
 
         current_item_count = 1
         current_discount = 0.0
@@ -4076,30 +5534,6 @@ class POSMainWindow(QMainWindow):
         save_sales_summary()
         save_receipts_archive()
         save_inventory_summary()
-
-        payment_details = {
-            "cash": cash_amount if payment_method in ("cash only", "cash and gcash") else 0.0,
-            "gcash": gcash_amount if payment_method in ("gcash only", "cash and gcash") else 0.0
-        }
-        order_reference = f"POS-{current_date.replace('-', '')}-{next_transaction_number:06d}"
-        try:
-            api_result = post_sales_invoice_to_api(
-                self.cart,
-                order_reference,
-                current_date,
-                payment_details,
-                self
-            )
-            if api_result:
-                data = api_result.get("data") if isinstance(api_result, dict) else None
-                if isinstance(data, dict):
-                    ref = data.get("ref_no") or data.get("order_no") or data.get("id")
-                else:
-                    ref = None
-                if ref:
-                    show_info("Invoice Submitted", f"Sales invoice sent to backend (reference: {ref}).", self)
-        except Exception as exc:
-            print(f"Error while submitting sales invoice to API: {exc}")
 
         # Clear cart and UI
         self.cart.clear()

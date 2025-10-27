@@ -1,0 +1,148 @@
+-- This script creates the database schema for your POS system.
+-- Run this in your MySQL database (e.g., via MySQL Workbench or command line) 
+-- *after* creating a new database (e.g., CREATE DATABASE pos_db; USE pos_db;)
+
+-- 1. Users Table
+-- Replaces users.txt
+-- Adds password hashing for security
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    is_admin BOOLEAN DEFAULT FALSE
+);
+
+-- 2. Promo Types Table
+-- Replaces PromoInventory.csv
+CREATE TABLE promo_types (
+    promo_code VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(255),
+    units_per_sale INT NOT NULL
+);
+
+-- 3. Products Table
+-- Replaces POSProducts.csv
+CREATE TABLE products (
+    product_id INT AUTO_INCREMENT PRIMARY KEY,
+    stock_no VARCHAR(100) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    stock INT NOT NULL DEFAULT 0,
+    image_filename VARCHAR(255) NULL
+);
+
+-- 4. Product Promotions Table
+-- Replaces the 'B1T1', 'B3T1' columns in POSProducts.csv
+-- This table links a product to one or more promotion types
+CREATE TABLE product_promotions (
+    product_promotion_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    promo_code VARCHAR(50) NOT NULL,
+    UNIQUE KEY uq_product_promo (product_id, promo_code), -- Prevent duplicate promos
+    FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE,
+    FOREIGN KEY (promo_code) REFERENCES promo_types(promo_code) ON DELETE CASCADE
+);
+
+-- 5. Bundles Table
+-- Replaces PromoBundles.json (the main bundle info)
+CREATE TABLE bundles (
+    bundle_id INT AUTO_INCREMENT PRIMARY KEY,
+    bundle_code VARCHAR(100) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    sku VARCHAR(100) UNIQUE NOT NULL
+);
+
+-- 6. Bundle Components Table
+-- Replaces the 'components' array in PromoBundles.json
+CREATE TABLE bundle_components (
+    bundle_component_id INT AUTO_INCREMENT PRIMARY KEY,
+    bundle_id INT NOT NULL,
+    product_stock_no VARCHAR(100) NOT NULL, -- This is the stock_no of the *specific* product/variant
+    variant_index INT NOT NULL DEFAULT 0,
+    quantity INT NOT NULL,
+    FOREIGN KEY (bundle_id) REFERENCES bundles(bundle_id) ON DELETE CASCADE
+    -- Note: We don't use a foreign key to products.stock_no here
+    -- because it's not a primary key and makes deletes complex.
+);
+
+-- 7. Basket Promos Table
+-- Replaces BasketPromos.json (the 'tiers' array)
+CREATE TABLE basket_promos (
+    promo_id INT AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(100) NOT NULL,
+    name VARCHAR(100) UNIQUE NOT NULL, -- Use name as unique key
+    threshold DECIMAL(10, 2) NOT NULL,
+    message TEXT NULL
+);
+
+-- 8. Basket Promo Freebies Table
+-- Replaces the 'freebies' array in BasketPromos.json
+CREATE TABLE basket_promo_freebies (
+    freebie_id INT AUTO_INCREMENT PRIMARY KEY,
+    promo_id INT NOT NULL,
+    product_stock_no VARCHAR(100) NOT NULL, -- This is the stock_no of the *specific* product/variant
+    variant_index INT NOT NULL DEFAULT 0,
+    quantity INT NOT NULL,
+    FOREIGN KEY (promo_id) REFERENCES basket_promos(promo_id) ON DELETE CASCADE
+);
+
+-- 9. Sales Transactions Table
+-- This table stores the master record for each sale
+CREATE TABLE sales_transactions (
+    transaction_id INT AUTO_INCREMENT PRIMARY KEY,
+    sales_no VARCHAR(50) UNIQUE NOT NULL,
+    transaction_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cashier_id INT NOT NULL,
+    total_amount DECIMAL(10, 2) NOT NULL,
+    payment_method VARCHAR(50) NOT NULL,
+    amount_tendered DECIMAL(10, 2) NOT NULL,
+    change_given DECIMAL(10, 2) NOT NULL,
+    FOREIGN KEY (cashier_id) REFERENCES users(user_id)
+);
+
+-- 10. Sales Items Table
+-- This table stores the individual items for each sale
+-- This replaces the need to save 'sales_summary.json' and 'inventory_summary.csv'
+CREATE TABLE sales_items (
+    sale_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    transaction_id INT NOT NULL,
+    product_id INT NOT NULL, -- The product_id of the *specific* product/variant sold
+    quantity INT NOT NULL,
+    price_per_unit DECIMAL(10, 2) NOT NULL,
+    total_price DECIMAL(10, 2) NOT NULL,
+    is_freebie BOOLEAN DEFAULT FALSE,
+    FOREIGN KEY (transaction_id) REFERENCES sales_transactions(transaction_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(product_id) -- We don't delete sale items if product is deleted
+);
+
+-- 11. Receipts Table
+-- Replaces receipts_archive.json
+CREATE TABLE receipts (
+    receipt_id INT AUTO_INCREMENT PRIMARY KEY,
+    transaction_id INT NULL,
+    sales_key VARCHAR(255) UNIQUE NOT NULL,
+    receipt_text TEXT NOT NULL,
+    receipt_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (transaction_id) REFERENCES sales_transactions(transaction_id) ON DELETE SET NULL
+);
+
+-- 12. Tendered Totals Table
+-- Replaces tendered_amounts.json
+-- This acts as a live running total for the day
+CREATE TABLE tendered_totals (
+    payment_method VARCHAR(50) PRIMARY KEY,
+    total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.0
+);
+
+-- Insert initial values for tendered totals
+INSERT INTO tendered_totals (payment_method, total_amount) VALUES ('cash', 0.0), ('gcash', 0.0)
+ON DUPLICATE KEY UPDATE payment_method=payment_method; -- Do nothing if they already exist
+
+-- Insert a default admin user (password: admin123)
+-- You SHOULD change this password in the app or DB
+-- The migrate_data.py script will add your 'cashier' user
+INSERT INTO users (username, password_hash, is_admin)
+VALUES ('admin', 'pbkdf2:sha256:600000$P9PjS8zL$a665a45920421f92a3c7defd2994f794770e1761ea9f67a6d3f44390f84820d8', TRUE)
+ON DUPLICATE KEY UPDATE username=username; -- Do nothing if admin already exists
+

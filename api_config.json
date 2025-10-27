@@ -1,0 +1,18 @@
+{
+  "baseUrl": "http://<host>/philtop/IMS/index.php/v1",
+  "authPath": "/auth/login",
+  "inventoryPath": "/inventory/{warehouseId}",
+  "salesInvoicePath": "/sales-invoices",
+  "warehouseId": 3,
+  "includeZero": false,
+  "login": {
+    "identity": "your-username",
+    "password": "your-password",
+    "ttlSeconds": 604800,
+    "forceNewToken": false
+  },
+  "defaultCustomerId": 1471,
+  "defaultNotes": "Submitted via POS system",
+  "defaultReference": null,
+  "orderReferencePrefix": "POS"
+}
