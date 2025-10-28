@@ -1,0 +1,13 @@
+{
+  "code": 201,
+  "message": "Sales invoice created",
+  "data": {
+    "id": 98541,
+    "ref_no": "OS0027",
+    "order_no": "EXHIBIT-2025-10-28",
+    "txn_date": "2025-10-28",
+    "amount_due": 12791.52,
+    "warehouse_id": "3"
+  },
+  "warning": []
+}
