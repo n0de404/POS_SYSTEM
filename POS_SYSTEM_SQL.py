@@ -207,10 +207,17 @@ UI_PREFERENCES_FILE = "ui_preferences.json"
 BASKET_PROMOS_FILE = "BasketPromos.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
-RECEIPT_FONT_NAME = "LucidaConsole"
-FALLBACK_RECEIPT_FONT_NAME = "Courier"
+RECEIPT_FONT_NAME = "Consolas"
+RECEIPT_FONT_CANDIDATES = [
+    (RECEIPT_FONT_NAME, ("consolab.ttf", "consola.ttf")),
+    ("Lucida Console", ("Lucon.ttf", "lucon.ttf")),
+    ("Courier New", ("courbd.ttf", "cour.ttf")),
+    ("Arial", ("arialbd.ttf", "arial.ttf")),
+]
+FALLBACK_RECEIPT_FONT_NAME = "Luicida Console"
+FALLBACK_QT_FONT_NAME = "Courier New"
 RECEIPT_PAGE_WIDTH_MM = 58
-RECEIPT_MARGIN_MM = 0.5
+RECEIPT_MARGIN_MM = 0.2
 RECEIPT_TOP_MARGIN_MM = 2
 RECEIPT_BASE_FONT_SIZE = 10
 RECEIPT_MIN_FONT_SIZE = 8
@@ -345,30 +352,43 @@ def ensure_bundle_image_column(conn):
         print(f"Warning: unable to add image_filename column to bundles table: {exc}")
         BUNDLE_IMAGE_COLUMN_AVAILABLE = False
         return False
+def _expand_font_paths(font_files):
+    """
+    Generates potential absolute paths for any candidate font files.
+    """
+    windows_dir = os.environ.get("WINDIR")
+    for font_file in font_files:
+        if not font_file:
+            continue
+        yield font_file
+        if windows_dir:
+            yield os.path.join(windows_dir, "Fonts", font_file)
+
+
 def get_receipt_font_name():
     """
     Returns the registered font name to use for receipts.
-    Attempts to register Lucida Console from the system fonts and falls back to Courier if unavailable.
+    Tries bold/legible fonts first and gracefully falls back to system-safe options.
     """
-    try:
-        pdfmetrics.getFont(RECEIPT_FONT_NAME)
-        return RECEIPT_FONT_NAME
-    except KeyError:
-        possible_paths = []
-        windows_dir = os.environ.get("WINDIR")
-        if windows_dir:
-            possible_paths.append(os.path.join(windows_dir, "Fonts", "Lucon.ttf"))
-            possible_paths.append(os.path.join(windows_dir, "Fonts", "lucon.ttf"))
-        possible_paths.append("Lucon.ttf")
-        for candidate in possible_paths:
-            if candidate and os.path.exists(candidate):
-                try:
-                    pdfmetrics.registerFont(TTFont(RECEIPT_FONT_NAME, candidate))
-                    return RECEIPT_FONT_NAME
-                except Exception as exc:
-                    print(f"Warning: failed to register Lucida Console font from '{candidate}': {exc}")
+    for font_alias, font_files in RECEIPT_FONT_CANDIDATES:
+        try:
+            pdfmetrics.getFont(font_alias)
+            return font_alias
+        except KeyError:
+            for candidate_path in _expand_font_paths(font_files):
+                if not os.path.exists(candidate_path):
                     continue
-    print("Warning: using Courier font as fallback for receipts.")
+                try:
+                    pdfmetrics.registerFont(TTFont(font_alias, candidate_path))
+                    return font_alias
+                except Exception as exc:
+                    print(f"Warning: failed to register receipt font '{font_alias}' from '{candidate_path}': {exc}")
+                    continue
+    try:
+        pdfmetrics.getFont(FALLBACK_RECEIPT_FONT_NAME)
+    except KeyError:
+        print(f"Warning: fallback font '{FALLBACK_RECEIPT_FONT_NAME}' not registered; using built-in Helvetica.")
+        return "Helvetica"
     return FALLBACK_RECEIPT_FONT_NAME
 def compute_receipt_layout():
     """
@@ -1899,7 +1919,9 @@ class ReceiptDialog(QDialog):
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         layout_info = compute_receipt_layout()
-        preview_font = QFont(get_receipt_font_name())
+        font_name = get_receipt_font_name()
+        qt_font_family = font_name if font_name != FALLBACK_RECEIPT_FONT_NAME else FALLBACK_QT_FONT_NAME
+        preview_font = QFont(qt_font_family)
         preview_font.setPointSizeF(layout_info["font_size"])
         preview_font.setBold(True)
         self.text_edit.setFont(preview_font)
@@ -5641,7 +5663,9 @@ class ReceiptDialog(QDialog):
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         layout_info = compute_receipt_layout()
-        preview_font = QFont(get_receipt_font_name())
+        font_name = get_receipt_font_name()
+        qt_font_family = font_name if font_name != FALLBACK_RECEIPT_FONT_NAME else FALLBACK_QT_FONT_NAME
+        preview_font = QFont(qt_font_family)
         preview_font.setPointSizeF(layout_info["font_size"])
         preview_font.setBold(True)
         self.text_edit.setFont(preview_font)
@@ -5700,113 +5724,6 @@ def _normalize_receipt_lines(receipt_text):
 
 def print_receipt_pdf(receipt_text, parent=None):
     layout = compute_receipt_layout()
-    normalized_lines = _normalize_receipt_lines(receipt_text)
-    try:
-        formatted_receipt = "\n".join("" if line is None else str(line) for line in normalized_lines)
-    except Exception:
-        formatted_receipt = str(receipt_text)
-    if sys.platform.startswith("win"):
-        if win32print is None or win32ui is None or win32con is None:
-            show_error(
-                "Print Error",
-                "Direct printing requires the 'pywin32' package (win32print/win32ui/win32con). Install it with 'pip install pywin32' and try again.",
-                parent,
-            )
-            return
-        printer_name = CUSTOM_RECEIPT_PRINTER_NAME.strip()
-        if not printer_name:
-            try:
-                printer_name = win32print.GetDefaultPrinter()
-            except win32print.error as exc:
-                show_error("Print Error", f"Unable to determine default printer:\n{exc}", parent)
-                return
-        if not printer_name:
-            show_error(
-                "Print Error",
-                "No printer selected. Set Windows default printer or update CUSTOM_RECEIPT_PRINTER_NAME.",
-                parent,
-            )
-            return
-        try:
-            hdc = win32ui.CreateDC()
-            hdc.CreatePrinterDC(printer_name)
-        except win32print.error as exc:
-            show_error("Print Error", f"Unable to access printer '{printer_name}':\n{exc}", parent)
-            return
-        except Exception as exc:
-            show_error("Print Error", f"Failed to create printer context:\n{exc}", parent)
-            return
-        job_name = f"POS Receipt {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        doc_started = False
-        page_started = False
-        try:
-            hdc.StartDoc({"DocName": job_name})
-            doc_started = True
-            hdc.StartPage()
-            page_started = True
-            dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX)
-            dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY)
-            margin_left = int(RECEIPT_MARGIN_MM / 25.4 * dpi_x)
-            top_margin = int(RECEIPT_TOP_MARGIN_MM / 25.4 * dpi_y)
-            font_name = layout.get("font_name") or get_receipt_font_name()
-            font_size_pt = layout.get("font_size", RECEIPT_BASE_FONT_SIZE)
-            font_height = int(-dpi_y * font_size_pt / 72.0) or -12
-            try:
-                font = win32ui.CreateFont(
-                    {
-                        "name": font_name,
-                        "height": font_height,
-                        "weight": win32con.FW_NORMAL,
-                        "charSet": win32con.ANSI_CHARSET,
-                    }
-                )
-            except Exception:
-                fallback_font = FALLBACK_RECEIPT_FONT_NAME
-                font = win32ui.CreateFont(
-                    {
-                        "name": fallback_font,
-                        "height": font_height,
-                        "weight": win32con.FW_NORMAL,
-                        "charSet": win32con.ANSI_CHARSET,
-                    }
-                )
-            hdc.SelectObject(font)
-            hdc.SetBkMode(win32con.TRANSPARENT)
-            line_spacing = layout.get("line_spacing", 1.0)
-            line_height = int(abs(font_height) * max(line_spacing, 1.0))
-            if line_height <= 0:
-                line_height = abs(font_height) or 12
-            y_pos = top_margin
-            for raw_line in normalized_lines:
-                line_text = "" if raw_line is None else str(raw_line)
-                line_text = line_text.rstrip()
-                line_text = line_text.replace("\u2022", "*").replace("\u2013", "-").replace("\u2014", "-")
-                hdc.TextOut(margin_left, y_pos, line_text)
-                y_pos += line_height
-            hdc.EndPage()
-            page_started = False
-            hdc.EndDoc()
-            doc_started = False
-            show_info("Print Job", f"Receipt sent to '{printer_name}'.", parent)
-        except Exception as exc:
-            if page_started:
-                try:
-                    hdc.EndPage()
-                except Exception:
-                    pass
-            if doc_started:
-                try:
-                    hdc.EndDoc()
-                except Exception:
-                    pass
-            show_error("Print Error", f"Failed to print the receipt:\n{exc}", parent)
-        finally:
-            try:
-                hdc.DeleteDC()
-            except Exception:
-                pass
-        return
-
     width_mm = RECEIPT_PAGE_WIDTH_MM
     height_mm = 297
     margin_left_right = RECEIPT_MARGIN_MM * mm
@@ -5817,21 +5734,50 @@ def print_receipt_pdf(receipt_text, parent=None):
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
             temp_pdf_path = temp_pdf.name
-        c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
-        x_start = margin_left_right
-        y_start = page_height - margin_top_bottom
-        render_receipt_text(c, formatted_receipt, layout, x_start, y_start)
-        c.showPage()
-        c.save()
     except Exception as exc:
-        show_error("Print Error", f"Failed to create receipt PDF:\n{exc}", parent)
+        show_error("Print Error", f"Failed to create temporary PDF file:\n{exc}", parent)
         return
 
     try:
-        subprocess.run(['lp', temp_pdf_path], check=True)
+        c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
+        font_name = layout.get("font_name") or get_receipt_font_name()
+        font_size = layout.get("font_size", RECEIPT_BASE_FONT_SIZE)
+        x_start = margin_left_right
+        y_start = page_height - margin_top_bottom
+
+        text_obj = c.beginText()
+        text_obj.setTextOrigin(x_start, y_start)
+        text_obj.setFont(font_name, font_size)
+
+        printable_width = page_width - 2 * margin_left_right
+        test_char_width = c.stringWidth("W", font_name, font_size) or 1.0
+        max_chars_per_line = max(int(printable_width / test_char_width), 1)
+
+        for line in str(receipt_text).split("\n"):
+            working_line = line.rstrip("\r")
+            while len(working_line) > max_chars_per_line:
+                segment = working_line[:max_chars_per_line]
+                text_obj.textLine(segment)
+                working_line = working_line[max_chars_per_line:]
+            text_obj.textLine(working_line)
+
+        c.drawText(text_obj)
+        c.showPage()
+        c.save()
+    except Exception as exc:
+        show_error("Print Error", f"Failed to generate receipt PDF:\n{exc}", parent)
+        return
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(temp_pdf_path, "print")
+        elif sys.platform.startswith("darwin"):
+            subprocess.run(["lp", temp_pdf_path], check=True)
+        else:
+            subprocess.run(["lp", temp_pdf_path], check=True)
         show_info("Print Job", "The receipt has been sent to the printer.", parent)
-    except Exception as e:
-        show_error("Print Error", f"Failed to print the receipt: {e}", parent)
+    except Exception as exc:
+        show_error("Print Error", f"Failed to print the receipt: {exc}", parent)
 def main():
     app = QApplication(sys.argv)
     preferred_theme = load_ui_preferences()
