@@ -207,24 +207,17 @@ UI_PREFERENCES_FILE = "ui_preferences.json"
 BASKET_PROMOS_FILE = "BasketPromos.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
-RECEIPT_FONT_NAME = "Consolas"
-RECEIPT_FONT_CANDIDATES = [
-    (RECEIPT_FONT_NAME, ("consolab.ttf", "consola.ttf")),
-    ("Lucida Console", ("Lucon.ttf", "lucon.ttf")),
-    ("Courier New", ("courbd.ttf", "cour.ttf")),
-    ("Arial", ("arialbd.ttf", "arial.ttf")),
-]
-FALLBACK_RECEIPT_FONT_NAME = "Luicida Console"
-FALLBACK_QT_FONT_NAME = "Courier New"
+RECEIPT_FONT_NAME = "LucidaConsole"
+FALLBACK_RECEIPT_FONT_NAME = "LucidaConsole"
 RECEIPT_PAGE_WIDTH_MM = 58
-RECEIPT_MARGIN_MM = 0.2
+RECEIPT_MARGIN_MM = 0.7
 RECEIPT_TOP_MARGIN_MM = 2
 RECEIPT_BASE_FONT_SIZE = 10
 RECEIPT_MIN_FONT_SIZE = 8
 RECEIPT_PRICE_COLUMN_WIDTH = 10
 RECEIPT_LEFT_COLUMN_TARGET = 24
 RECEIPT_LINE_SPACING_MULTIPLIER = 1.2
-RECEIPT_BOLD_OFFSET_PT = 0.3
+RECEIPT_BOLD_OFFSET_PT = 0.0
 def get_db_connection(parent=None):
     """
     Creates and returns a MySQL connection using DB_CONFIG.
@@ -352,43 +345,30 @@ def ensure_bundle_image_column(conn):
         print(f"Warning: unable to add image_filename column to bundles table: {exc}")
         BUNDLE_IMAGE_COLUMN_AVAILABLE = False
         return False
-def _expand_font_paths(font_files):
-    """
-    Generates potential absolute paths for any candidate font files.
-    """
-    windows_dir = os.environ.get("WINDIR")
-    for font_file in font_files:
-        if not font_file:
-            continue
-        yield font_file
-        if windows_dir:
-            yield os.path.join(windows_dir, "Fonts", font_file)
-
-
 def get_receipt_font_name():
     """
     Returns the registered font name to use for receipts.
-    Tries bold/legible fonts first and gracefully falls back to system-safe options.
+    Attempts to register Lucida Console from the system fonts and falls back to Courier if unavailable.
     """
-    for font_alias, font_files in RECEIPT_FONT_CANDIDATES:
-        try:
-            pdfmetrics.getFont(font_alias)
-            return font_alias
-        except KeyError:
-            for candidate_path in _expand_font_paths(font_files):
-                if not os.path.exists(candidate_path):
-                    continue
-                try:
-                    pdfmetrics.registerFont(TTFont(font_alias, candidate_path))
-                    return font_alias
-                except Exception as exc:
-                    print(f"Warning: failed to register receipt font '{font_alias}' from '{candidate_path}': {exc}")
-                    continue
     try:
-        pdfmetrics.getFont(FALLBACK_RECEIPT_FONT_NAME)
+        pdfmetrics.getFont(RECEIPT_FONT_NAME)
+        return RECEIPT_FONT_NAME
     except KeyError:
-        print(f"Warning: fallback font '{FALLBACK_RECEIPT_FONT_NAME}' not registered; using built-in Helvetica.")
-        return "Helvetica"
+        possible_paths = []
+        windows_dir = os.environ.get("WINDIR")
+        if windows_dir:
+            possible_paths.append(os.path.join(windows_dir, "Fonts", "Lucon.ttf"))
+            possible_paths.append(os.path.join(windows_dir, "Fonts", "lucon.ttf"))
+        possible_paths.append("Lucon.ttf")
+        for candidate in possible_paths:
+            if candidate and os.path.exists(candidate):
+                try:
+                    pdfmetrics.registerFont(TTFont(RECEIPT_FONT_NAME, candidate))
+                    return RECEIPT_FONT_NAME
+                except Exception as exc:
+                    print(f"Warning: failed to register Lucida Console font from '{candidate}': {exc}")
+                    continue
+    print("Warning: using Courier font as fallback for receipts.")
     return FALLBACK_RECEIPT_FONT_NAME
 def compute_receipt_layout():
     """
@@ -1788,8 +1768,52 @@ def save_sales_summary():
     """Sales data is stored in MySQL; no file save required."""
     return True
 def save_receipts_archive():
-    """Receipts are persisted in MySQL; no file save required."""
-    return True
+    """
+    Synchronize the in-memory receipts archive with the database table.
+    Ensures that added or removed receipts persist across application restarts.
+    """
+    global receipts_archive
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT sales_key FROM receipts")
+            existing_keys = {row["sales_key"] for row in cursor.fetchall()}
+        current_keys = set(receipts_archive.keys())
+        keys_to_delete = existing_keys - current_keys
+        with conn.cursor() as cursor:
+            if keys_to_delete:
+                cursor.executemany(
+                    "DELETE FROM receipts WHERE sales_key = %s",
+                    [(key,) for key in keys_to_delete],
+                )
+            if receipts_archive:
+                upsert_sql = (
+                    "INSERT INTO receipts (transaction_id, sales_key, receipt_text) "
+                    "VALUES (%s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE receipt_text = VALUES(receipt_text)"
+                )
+                cursor.executemany(
+                    upsert_sql,
+                    [(None, key, text) for key, text in receipts_archive.items()],
+                )
+            elif not current_keys:
+                cursor.execute("DELETE FROM receipts")
+        conn.commit()
+        return True
+    except Error as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"Error saving receipts archive: {exc}")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 def load_inventory_summary():
     """
     Builds the inventory summary snapshot from the products and sales_items tables.
@@ -1919,11 +1943,8 @@ class ReceiptDialog(QDialog):
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         layout_info = compute_receipt_layout()
-        font_name = get_receipt_font_name()
-        qt_font_family = font_name if font_name != FALLBACK_RECEIPT_FONT_NAME else FALLBACK_QT_FONT_NAME
-        preview_font = QFont(qt_font_family)
+        preview_font = QFont(get_receipt_font_name())
         preview_font.setPointSizeF(layout_info["font_size"])
-        preview_font.setBold(True)
         self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
@@ -4258,6 +4279,9 @@ class POSMainWindow(QMainWindow):
         self.entry_product_search.setCompleter(self._completer)
         # Connect to update completer model on typing for dynamic filtering
         self.entry_product_search.lineEdit().textEdited.connect(self.filter_product_search_list)
+        # Ensure search box starts blank instead of displaying the first product
+        self.entry_product_search.setCurrentIndex(-1)
+        self.entry_product_search.clearEditText()
     def filter_product_search_list(self, text):
         # Filter underlying model of completer based on typed text to update dropdown options.
         text_lower = text.lower().strip()
@@ -4573,7 +4597,7 @@ class POSMainWindow(QMainWindow):
                 show_warning("Product Not Found", f"Product with SKU '{sku}' not found in database.", self)
                 self.clear_product_display()
             else:
-                self.entry_product_search.setEditText("")
+                self.clear_product_search_entry()
         else:
             show_warning("Format Error", "Invalid product selection format.", self)
             self.clear_product_display()
@@ -4726,6 +4750,7 @@ class POSMainWindow(QMainWindow):
             self.label_product_barcode_number.setText(f"Includes: {component_summary}")
             self.display_product_image(lookup.get("image_filename"), lookup.get("sku"))
             self.set_display_context(None, None, item.get("bundle_code"))
+            self.clear_product_search_entry()
             current_item_count = 1
             current_discount = 0.0
             self.update_total()
@@ -4759,16 +4784,42 @@ class POSMainWindow(QMainWindow):
         self.label_product_barcode_number.setText(f"Stock No.: {lookup['sku']}")
         self.display_product_image(variant.get('image_filename'), lookup.get('sku'))
         self.set_display_context(base_barcode, variant_index, None)
+        self.clear_product_search_entry()
         current_item_count = 1
         current_discount = 0.0
         self.update_total()
         return True
+    def clear_product_search_entry(self):
+        """Reset the product search box so the next lookup starts empty."""
+        if not hasattr(self, "entry_product_search") or self.entry_product_search is None:
+            return
+        try:
+            self.entry_product_search.blockSignals(True)
+            # Clear both the combobox edit buffer and embedded line edit text.
+            self.entry_product_search.clearEditText()
+            self.entry_product_search.setEditText("")
+            line_edit = self.entry_product_search.lineEdit()
+            if line_edit:
+                line_edit.clear()
+                line_edit.setText("")
+                line_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+            if hasattr(self, "_completer_model"):
+                self._completer_model.setStringList(self._product_search_list)
+        finally:
+            self.entry_product_search.blockSignals(False)
+        self.entry_product_search.setCurrentIndex(-1)
+        self.entry_product_search.setEditText("")
+        self.entry_product_search.setCurrentText("")
+        line_edit = self.entry_product_search.lineEdit()
+        if line_edit:
+            line_edit.setText("")
+        self.entry_product_search.hidePopup()
     def process_scanned_code(self, barcode_input):
         global current_item_count, current_discount
         barcode_input = (barcode_input or "").strip()
         if not barcode_input:
             return
-        self.entry_product_search.setEditText("")
+        self.clear_product_search_entry()
         # Clear previous product info display
         self.clear_product_display()
         added = self.add_item_to_cart_by_sku(barcode_input)
@@ -4943,7 +4994,7 @@ class POSMainWindow(QMainWindow):
         current_date = datetime.now().strftime("%Y-%m-%d")
         current_time = datetime.now().strftime("%H:%M:%S")
         sales_trans_label = f"SALES#: {next_sales_number:06d}   TRANS#: {next_transaction_number:06d}"
-        sales_trans_line = f"{sales_trans_label}   {current_date}"
+        sales_trans_line = f"{sales_trans_label}"
         # Generate receipt text content based on printable layout
         layout_info = compute_receipt_layout()
         width = int(layout_info["total_width"])
@@ -5040,7 +5091,8 @@ class POSMainWindow(QMainWindow):
         append_columns("Change:", f"P{change:,.2f}")
         append_columns(f"Payment Method: {payment_method.title()}")
         receipt_text_content += "-" * width + "\n"
-        receipt_text_content += f"{current_time:^{width}}\n"
+        timestamp_line = f"{current_date} {current_time}"
+        receipt_text_content += f"{timestamp_line:^{width}}\n"
         receipt_text_content += f"{'Cashier: ' + self.current_user_name:^{width}}\n"
         receipt_text_content += f"{'SUNNYWARE PHILIPPINES':^{width}}\n"
         freebie_messages = [msg for msg in self.applied_freebie_messages if msg]
@@ -5055,7 +5107,9 @@ class POSMainWindow(QMainWindow):
         receipt_dialog = ReceiptDialog(receipt_text_content, self)
         receipt_dialog.exec()
         # Update stock & sales summary after transaction
+        sale_items_records = []
         for item in self.cart:
+            is_freebie = bool(item.get("is_freebie"))
             if item.get('bundle_components'):
                 bundle_qty = item.get('qty', 1)
                 component_infos = []
@@ -5078,19 +5132,34 @@ class POSMainWindow(QMainWindow):
                     total_base_value += base_value
                     component_infos.append({
                         "barcode": barcode,
+                        "product_id": variant.get("_product_id"),
                         "deduction_units": deduction_units,
                         "base_value": base_value
                     })
                 for info in component_infos:
                     barcode = info["barcode"]
-                    if barcode not in sales_summary:
-                        sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
-                    sales_summary[barcode]["qty_sold"] += info["deduction_units"]
+                    product_id = info["product_id"]
+                    quantity = info["deduction_units"]
+                    if not is_freebie:
+                        if barcode not in sales_summary:
+                            sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
+                        sales_summary[barcode]["qty_sold"] += quantity
                     if total_base_value > 0:
                         share = info["base_value"] / total_base_value
                     else:
                         share = 1 / len(component_infos) if component_infos else 0
-                    sales_summary[barcode]["revenue"] += item['price'] * bundle_qty * share
+                    component_total = 0.0 if is_freebie else item['price'] * bundle_qty * share
+                    if not is_freebie:
+                        sales_summary[barcode]["revenue"] += component_total
+                    price_per_unit = (component_total / quantity) if quantity and component_total else 0.0
+                    if product_id:
+                        sale_items_records.append({
+                            "product_id": product_id,
+                            "quantity": int(quantity),
+                            "price_per_unit": price_per_unit,
+                            "total_price": component_total,
+                            "is_freebie": is_freebie,
+                        })
                 continue
             sku = item.get('Stock No.')
             base_barcode = item.get('base_stock_no', sku)
@@ -5098,20 +5167,43 @@ class POSMainWindow(QMainWindow):
             inventory_usage = item.get('inventory_usage', 1)
             variant_index = item.get('variant_index', 0)
             deduction_units = qty * inventory_usage
-            if isinstance(deduction_units, float) and deduction_units.is_integer():
-                deduction_units = int(deduction_units)
             variants = products.get(base_barcode, [])
-            if variants:
-                target_variant = variants[variant_index] if variant_index < len(variants) else variants[0]
-                target_variant["stock"] -= deduction_units
-            else:
+            if not variants:
                 print(f"Warning: Unable to update inventory. Base product '{base_barcode}' not found.")
                 continue
-            if base_barcode not in sales_summary:
-                sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
-            sales_summary[base_barcode]["qty_sold"] += deduction_units
-            sales_summary[base_barcode]["revenue"] += item['price'] * qty
-        # Save updated products to CSV
+            if variant_index >= len(variants):
+                variant_index = 0
+            variant = variants[variant_index]
+            variant["stock"] -= deduction_units
+            if isinstance(deduction_units, float) and deduction_units.is_integer():
+                deduction_units = int(deduction_units)
+            product_id = variant.get("_product_id")
+            line_total_amount = 0.0 if is_freebie else item['price'] * qty
+            if not is_freebie:
+                if base_barcode not in sales_summary:
+                    sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
+                sales_summary[base_barcode]["qty_sold"] += deduction_units
+                sales_summary[base_barcode]["revenue"] += line_total_amount
+            price_per_unit = (line_total_amount / deduction_units) if deduction_units and line_total_amount else 0.0
+            if product_id:
+                sale_items_records.append({
+                    "product_id": product_id,
+                    "quantity": int(deduction_units),
+                    "price_per_unit": price_per_unit,
+                    "total_price": line_total_amount,
+                    "is_freebie": is_freebie,
+                })
+        self.persist_checkout_to_database(
+            next_sales_number,
+            sales_trans_label,
+            receipt_text_content,
+            total,
+            total_paid,
+            change,
+            payment_method,
+            sale_items_records,
+        )
+        # Persist updated product stock levels
         save_products_to_csv(self)
         # Increment transaction numbers AFTER generating the label and receipt
         current_sales_number = next_sales_number
@@ -5126,6 +5218,102 @@ class POSMainWindow(QMainWindow):
         self.update_total()
         self.clear_product_display()
         self.handle_session_after_checkout()
+    def persist_checkout_to_database(
+        self,
+        next_sales_number,
+        sales_key,
+        receipt_text,
+        total_amount,
+        amount_tendered,
+        change_due,
+        payment_method,
+        sale_items_records,
+    ):
+        """
+        Persist the completed sale, its line items, and receipt text to the MySQL database.
+        """
+        conn = get_db_connection(self)
+        if not conn:
+            return
+        try:
+            with conn.cursor(dictionary=True) as cursor:
+                cursor.execute(
+                    "SELECT user_id FROM users WHERE username = %s",
+                    (self.current_user_name,),
+                )
+                user_row = cursor.fetchone()
+            if not user_row:
+                show_error(
+                    "Database Error",
+                    "Unable to record sale because the current cashier could not be found in the database.",
+                    self,
+                )
+                return
+            cashier_id = user_row["user_id"]
+            with conn.cursor() as cursor:
+                sales_no_value = f"{int(next_sales_number):06d}"
+                cursor.execute(
+                    """
+                    INSERT INTO sales_transactions
+                        (sales_no, transaction_time, cashier_id, total_amount, payment_method, amount_tendered, change_given)
+                    VALUES
+                        (%s, NOW(), %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        sales_no_value,
+                        cashier_id,
+                        float(total_amount),
+                        payment_method,
+                        float(amount_tendered),
+                        float(change_due),
+                    ),
+                )
+                transaction_id = cursor.lastrowid
+                clean_items = [
+                    (
+                        transaction_id,
+                        int(item["product_id"]),
+                        int(item["quantity"]),
+                        float(item["price_per_unit"]),
+                        float(item["total_price"]),
+                        bool(item["is_freebie"]),
+                    )
+                    for item in sale_items_records
+                    if item.get("product_id") is not None
+                ]
+                if clean_items:
+                    cursor.executemany(
+                        """
+                        INSERT INTO sales_items
+                            (transaction_id, product_id, quantity, price_per_unit, total_price, is_freebie)
+                        VALUES
+                            (%s, %s, %s, %s, %s, %s)
+                        """,
+                        clean_items,
+                    )
+                cursor.execute(
+                    """
+                    INSERT INTO receipts (transaction_id, sales_key, receipt_text)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        receipt_text = VALUES(receipt_text),
+                        transaction_id = VALUES(transaction_id)
+                    """,
+                    (transaction_id, sales_key, receipt_text),
+                )
+            conn.commit()
+        except Error as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"Error persisting checkout: {exc}")
+            show_error("Database Error", f"Unable to save sale to the database:\n{exc}", self)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
     def set_discount(self):
         disc, ok = QInputDialog.getDouble(self, "Apply Discount", "Enter discount percentage (0-100):", min=0, max=100)
         if ok:
@@ -5543,7 +5731,7 @@ class SalesSummaryDialog(QDialog):
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#1f2937")),
                 ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 0), (-1, 0), 'LucidaConsole'),
                 ('FONTSIZE', (0, 0), (-1, 0), 14),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
@@ -5663,11 +5851,8 @@ class ReceiptDialog(QDialog):
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         layout_info = compute_receipt_layout()
-        font_name = get_receipt_font_name()
-        qt_font_family = font_name if font_name != FALLBACK_RECEIPT_FONT_NAME else FALLBACK_QT_FONT_NAME
-        preview_font = QFont(qt_font_family)
+        preview_font = QFont(get_receipt_font_name())
         preview_font.setPointSizeF(layout_info["font_size"])
-        preview_font.setBold(True)
         self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
@@ -5740,28 +5925,15 @@ def print_receipt_pdf(receipt_text, parent=None):
 
     try:
         c = canvas.Canvas(temp_pdf_path, pagesize=(page_width, page_height))
-        font_name = layout.get("font_name") or get_receipt_font_name()
-        font_size = layout.get("font_size", RECEIPT_BASE_FONT_SIZE)
+        normalized_layout = dict(layout)
+        font_name = normalized_layout.get("font_name") or get_receipt_font_name()
+        font_size = normalized_layout.get("font_size", RECEIPT_BASE_FONT_SIZE)
+        normalized_layout["font_name"] = font_name
+        normalized_layout["font_size"] = font_size
         x_start = margin_left_right
         y_start = page_height - margin_top_bottom
 
-        text_obj = c.beginText()
-        text_obj.setTextOrigin(x_start, y_start)
-        text_obj.setFont(font_name, font_size)
-
-        printable_width = page_width - 2 * margin_left_right
-        test_char_width = c.stringWidth("W", font_name, font_size) or 1.0
-        max_chars_per_line = max(int(printable_width / test_char_width), 1)
-
-        for line in str(receipt_text).split("\n"):
-            working_line = line.rstrip("\r")
-            while len(working_line) > max_chars_per_line:
-                segment = working_line[:max_chars_per_line]
-                text_obj.textLine(segment)
-                working_line = working_line[max_chars_per_line:]
-            text_obj.textLine(working_line)
-
-        c.drawText(text_obj)
+        render_receipt_text(c, str(receipt_text), normalized_layout, x_start, y_start)
         c.showPage()
         c.save()
     except Exception as exc:
