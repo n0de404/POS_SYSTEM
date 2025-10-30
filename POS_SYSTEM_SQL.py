@@ -187,9 +187,9 @@ def ensure_inventory_stub_file(file_path, parent=None):
         return False
 # --- Database configuration ---
 DB_CONFIG = {
-    "host": "localhost",
+    "host": "192.168.1.146",
     "user": "user",
-    "password": "philtop",
+    "password": "0t1docmtl$tm",
     "database": "pos_db",
     "use_pure": True,
 }
