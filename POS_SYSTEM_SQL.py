@@ -1,8 +1,8 @@
 ﻿import sys
 import os
 import re
-import csv
 import glob
+import importlib
 from datetime import datetime, timedelta
 import time
 from functools import partial
@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 import json  # Import the json module
 from copy import deepcopy
+import types
 import shutil
 import textwrap
 try:
@@ -50,7 +51,7 @@ from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, Q
 from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush
 from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, pyqtSignal, QTimer
 # --- Global Variables ---
-products = {}  # Stores product data from CSV: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
+products = {}  # Stores product data from the database: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
 cart = []  # Stores items currently in the cart
 current_item_count = 1  # Default quantity for next scanned item
 current_discount = 0.0  # Default discount percentage for next scanned item
@@ -63,7 +64,7 @@ inventory_summary = {}
 sales_summary = {}  # Stores sales data for reporting: {barcode: {"qty_sold": ..., "revenue": ...}}
 product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
 promo_inventory_map = {}  # Maps promo code to the number of base units consumed per sale
-product_promo_columns = []  # Tracks additional promo pricing columns detected in the products CSV
+product_promo_columns = []  # Tracks additional promo pricing codes detected in the database
 bundle_promos = {}  # Stores bundle promos with their component details
 current_theme_preference = "system"
 current_theme_effective = "light"
@@ -73,7 +74,6 @@ users_data = {}  # Stores usernames and hashed passwords: {username: {"password_
 current_user_name = None  # Stores the username of the currently logged-in user
 ADMIN_PASSWORD_FILE = "admin_password.txt"
 DEFAULT_ADMIN_PASSWORD = "p@ssw0rd01"
-PRODUCTS_CSV_FILE = "POSProducts.csv"  # Name of the CSV file for products
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = "users.txt"  # Name of the text file for user credentials
 PRODUCT_IMAGE_FOLDER = os.path.join(BASE_DIR, "product_images")  # Folder where product images are stored
@@ -105,20 +105,6 @@ DEFAULT_API_SETTINGS = {
 }
 api_settings = None
 api_token_cache = None
-DEFAULT_SALES_INVOICE_STUB_RESPONSE = {
-    "code": 201,
-    "message": "Sales invoice created",
-    "data": {
-        "id": 98541,
-        "ref_no": "OS0026",
-        "order_no": "EXHIBIT-2025-10-28",
-        "txn_date": "2025-10-28",
-        "amount_due": 12791.52,
-        "warehouse_id": "3",
-    },
-    "warning": [],
-}
-
 def normalize_image_filename(filename):
     """
     Returns a sanitized image filename limited to the final path segment.
@@ -169,22 +155,13 @@ def resolve_product_image_filename(stock_no, image_filename=None):
     return candidate
 def ensure_inventory_stub_file(file_path, parent=None):
     """
-    Ensures that a JSON file exists at the given path containing the default stub payload.
+    Validates that the configured inventory stub file exists on disk.
     """
-    try:
-        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-    except Exception:
-        pass
     candidate = os.path.abspath(file_path)
     if os.path.exists(candidate):
         return True
-    try:
-        with open(candidate, "w", encoding="utf-8") as fh:
-            json.dump(DEFAULT_INVENTORY_STUB_DATA, fh, indent=2)
-        return True
-    except Exception as exc:
-        show_warning("Inventory Stub", f"Failed to create stub file '{candidate}':\n{exc}", parent)
-        return False
+    show_warning("Inventory Stub", f"Inventory stub file '{candidate}' was not found.", parent)
+    return False
 # --- Database configuration ---
 DB_CONFIG = {
     "host": "192.168.1.146",
@@ -197,14 +174,7 @@ DB_CONFIG = {
 PROMO_PRICE_COLUMN_AVAILABLE = None
 PROMO_PRICE_WARNING_SHOWN = False
 # --- New Global Variables for Auto-Saving ---
-INVENTORY_SUMMARY_FILE = "inventory_summary.csv"
-SALES_SUMMARY_FILE = "sales_summary.json"
-RECEIPTS_ARCHIVE_FILE = "receipts_archive.json"
-TENDERED_AMOUNTS_FILE = "tendered_amounts.json"
-PROMO_INVENTORY_FILE = "PromoInventory.csv"
-PROMO_BUNDLES_FILE = "PromoBundles.json"
 UI_PREFERENCES_FILE = "ui_preferences.json"
-BASKET_PROMOS_FILE = "BasketPromos.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
 RECEIPT_FONT_NAME = "LucidaConsole"
@@ -218,6 +188,72 @@ RECEIPT_PRICE_COLUMN_WIDTH = 10
 RECEIPT_LEFT_COLUMN_TARGET = 24
 RECEIPT_LINE_SPACING_MULTIPLIER = 1.2
 RECEIPT_BOLD_OFFSET_PT = 0.0
+
+
+def ensure_mysql_locale_support():
+    """
+    Ensures mysql-connector can resolve English locale data even in packaged builds
+    where locale resources are not copied alongside the library.
+    """
+    try:
+        from mysql.connector import locales
+    except Exception:
+        return
+
+    en_us_module_name = "mysql.connector.locales.en_US.client_error"
+    fallback_errors = {}
+    try:
+        en_us_module = importlib.import_module(en_us_module_name)
+        fallback_errors = getattr(en_us_module, "client_error", {})
+        sys.modules.setdefault(en_us_module_name, en_us_module)
+    except ImportError:
+        # Provide stub modules for en_US so subsequent imports succeed.
+        if en_us_module_name not in sys.modules:
+            en_us_stub = types.ModuleType(en_us_module_name)
+            en_us_stub.client_error = fallback_errors
+            sys.modules[en_us_module_name] = en_us_stub
+    en_us_pkg_name = "mysql.connector.locales.en_US"
+    if en_us_pkg_name not in sys.modules:
+        en_us_pkg = types.ModuleType(en_us_pkg_name)
+        en_us_pkg.__path__ = []
+        en_us_pkg.client_error = sys.modules[en_us_module_name]
+        sys.modules[en_us_pkg_name] = en_us_pkg
+
+    def _register_alias(lang_code):
+        package_name = f"mysql.connector.locales.{lang_code}"
+        module_name = f"{package_name}.client_error"
+        client_module = sys.modules.get(module_name)
+        if client_module is None:
+            client_module = types.ModuleType(module_name)
+            sys.modules[module_name] = client_module
+        client_module.client_error = fallback_errors
+        pkg_module = sys.modules.get(package_name)
+        if pkg_module is None:
+            pkg_module = types.ModuleType(package_name)
+            pkg_module.__path__ = []
+            sys.modules[package_name] = pkg_module
+        sys.modules[package_name].client_error = client_module
+
+    for alias in ("eng", "en"):
+        _register_alias(alias)
+
+    original = getattr(locales, "_original_get_client_error", locales.get_client_error)
+
+    def _patched_get_client_error(language=None):
+        normalized = (language or "").lower()
+        if normalized in {"eng", "en", "english"}:
+            language = "en_US"
+        try:
+            return original(language)
+        except ImportError:
+            return fallback_errors
+
+    if not hasattr(locales, "_original_get_client_error"):
+        locales._original_get_client_error = original
+        locales.get_client_error = _patched_get_client_error
+
+
+ensure_mysql_locale_support()
 def get_db_connection(parent=None):
     """
     Creates and returns a MySQL connection using DB_CONFIG.
@@ -276,7 +312,7 @@ def ensure_promo_price_column(conn):
     if exists:
         PROMO_PRICE_COLUMN_AVAILABLE = True
         return True
-    # Try to add the column so promo pricing can match the CSV behavior.
+    # Try to add the column so promo pricing matches the legacy behavior.
     try:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -911,7 +947,7 @@ def load_inventory_stub_payload(parent=None):
         return None
     file_path = api_settings.get("inventory_stub_file") or "inventory_stub.json"
     if not ensure_inventory_stub_file(file_path, parent):
-        return deepcopy(DEFAULT_INVENTORY_STUB_DATA)
+        return {}
     candidate = os.path.abspath(file_path)
     try:
         with open(candidate, "r", encoding="utf-8") as f:
@@ -921,28 +957,22 @@ def load_inventory_stub_payload(parent=None):
         show_warning("Inventory Stub", f"Inventory stub file '{candidate}' does not contain a JSON object.", parent)
     except Exception as exc:
         show_warning("Inventory Stub", f"Failed to read inventory stub file '{candidate}':\n{exc}", parent)
-    return deepcopy(DEFAULT_INVENTORY_STUB_DATA)
+    return {}
 def ensure_sales_invoice_stub_file(file_path, parent=None):
-    try:
-        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-    except Exception:
-        pass
+    """
+    Validates that the configured sales stub file exists on disk.
+    """
     candidate = os.path.abspath(file_path)
     if os.path.exists(candidate):
         return True
-    try:
-        with open(candidate, "w", encoding="utf-8") as fh:
-            json.dump(DEFAULT_SALES_INVOICE_STUB_RESPONSE, fh, indent=2)
-        return True
-    except Exception as exc:
-        show_warning("Sales Stub", f"Failed to create stub file '{candidate}':\n{exc}", parent)
-        return False
+    show_warning("Sales Stub", f"Sales stub file '{candidate}' was not found.", parent)
+    return False
 def load_sales_invoice_stub_response(parent=None):
     if not ensure_api_settings_loaded(parent):
         return None
     file_path = api_settings.get("sales_stub_file") or "sales_invoice_stub.json"
     if not ensure_sales_invoice_stub_file(file_path, parent):
-        return deepcopy(DEFAULT_SALES_INVOICE_STUB_RESPONSE)
+        return {}
     candidate = os.path.abspath(file_path)
     try:
         with open(candidate, "r", encoding="utf-8") as fh:
@@ -952,7 +982,7 @@ def load_sales_invoice_stub_response(parent=None):
             show_warning("Sales Stub", f"Sales stub file '{candidate}' does not contain a JSON object.", parent)
     except Exception as exc:
         show_warning("Sales Stub", f"Failed to read sales stub file '{candidate}':\n{exc}", parent)
-    return deepcopy(DEFAULT_SALES_INVOICE_STUB_RESPONSE)
+    return {}
 
 
 class BarcodeScannerWorker(QThread):
@@ -1093,8 +1123,8 @@ def fetch_inventory_payload(parent=None):
         show_error("Inventory Sync Failed", "Unexpected response format from API.", parent)
         return None
     return payload
-# --- CSV Handling Functions ---
-def load_products_from_csv(parent=None):
+# --- Product Persistence ---
+def load_products_from_database(parent=None):
     """
     Legacy entry point kept for compatibility with the original code.
     Now loads the complete product catalog (including promo pricing) from MySQL.
@@ -1480,7 +1510,10 @@ def rebuild_product_variant_lookup():
                 promo_sku = f"{barcode}_{promo_code}"
                 inventory_usage = promo_inventory_map.get(promo_code, 1)
                 if promo_code not in promo_inventory_map:
-                    print(f"Warning: promo code '{promo_code}' is missing from '{PROMO_INVENTORY_FILE}'. Defaulting inventory usage to 1.")
+                    print(
+                        f"Warning: promo code '{promo_code}' is missing from the promo inventory map. "
+                        "Defaulting inventory usage to 1."
+                    )
                 promo_price_value = promo_price if promo_price is not None else variant['price']
                 product_variant_lookup[promo_sku] = {
                     "sku": promo_sku,
@@ -1539,9 +1572,9 @@ def rebuild_product_variant_lookup():
             "bundle_components": resolved_components,
             "display_components": display_components
         }
-def save_products_to_csv(parent=None):
+def save_products_to_database(parent=None):
     """
-    Saves the current product data (including updated stock and image filename) to the CSV file.
+    Saves the current product data (including updated stock and image filename) to the database.
     """
     conn = get_db_connection(parent)
     if not conn:
@@ -2519,7 +2552,7 @@ class InventoryManagementDialog(QDialog):
                         variant['stock'] += z95_stock_int  # Add the stock
                         if variant['stock'] != original_stock:  # Check if the stock level actually changed
                             replenished_count += 1  # Increment replenished count
-                save_products_to_csv(self)  # Save updated products to CSV
+                save_products_to_database(self)  # Persist updated products to MySQL
                 self.populate_table()  # Refresh the table
                 show_info("Replenish Successful", f"Stocks replenished for {replenished_count} products.", self)
             except Exception as e:
@@ -2673,7 +2706,7 @@ class InventoryManagementDialog(QDialog):
                             promos.pop(code, None)
             if removed:
                 save_promo_inventory(self)
-                save_products_to_csv(self)
+                save_products_to_database(self)
                 self.populate_promos_table()
                 self.populate_table()
                 show_info("Promos Removed", f"Removed {removed} promo(s).", self)
@@ -2838,7 +2871,7 @@ class InventoryManagementDialog(QDialog):
                                 updated_count += 1  # Increment updated count only if stock changes
                     else:
                         ignored_count += 1  # Count ignored products
-                save_products_to_csv(self)  # Save updated products to CSV
+                save_products_to_database(self)  # Persist updated products to MySQL
                 self.populate_table()  # Refresh the table
                 show_info("Import Successful", f"Stocks updated for {updated_count} products.\nIgnored {ignored_count} products not in current inventory.", self)
             except Exception as e:
@@ -2880,7 +2913,7 @@ class InventoryManagementDialog(QDialog):
         if updated_count == 0 and ignored_count == 0:
             show_info("Inventory Sync", "No local products were matched to the API response.", self)
             return
-        save_products_to_csv(self)
+        save_products_to_database(self)
         rebuild_product_variant_lookup()
         parent = self.parent()
         if parent and hasattr(parent, "refresh_product_search_options"):
@@ -3229,7 +3262,7 @@ class PromoManagementDialog(QDialog):
                     promos[promo_code] = selected_entries[key]
                 else:
                     promos.pop(promo_code, None)
-        save_products_to_csv(self)
+        save_products_to_database(self)
         save_promo_inventory(self)
         rebuild_product_variant_lookup()
         if promo_code not in {self.promo_code_combo.itemText(i) for i in range(self.promo_code_combo.count())}:
@@ -4685,7 +4718,7 @@ class POSMainWindow(QMainWindow):
         if not new_filename:
             return
         variant["image_filename"] = new_filename
-        save_products_to_csv(self)
+        save_products_to_database(self)
         rebuild_product_variant_lookup()
         self.display_product_image(new_filename, self.current_display_barcode)
         self.set_display_context(self.current_display_barcode, variant_index, None)
@@ -5222,7 +5255,7 @@ class POSMainWindow(QMainWindow):
             sale_items_records,
         )
         # Persist updated product stock levels
-        save_products_to_csv(self)
+        save_products_to_database(self)
         # Increment transaction numbers AFTER generating the label and receipt
         current_sales_number = next_sales_number
         current_transaction_number = next_transaction_number
@@ -5352,7 +5385,7 @@ class POSMainWindow(QMainWindow):
         rebuild_product_variant_lookup()
         self.refresh_product_search_options()
         save_inventory_summary()
-        save_products_to_csv(self)
+        save_products_to_database(self)
     def summary_view(self):
         dlg = SalesSummaryDialog(self)
         dlg.exec()
@@ -5974,8 +6007,8 @@ def main():
     apply_theme(app, preferred_theme)
     # Ensure image folder exists
     os.makedirs(PRODUCT_IMAGE_FOLDER, exist_ok=True)
-    if not load_products_from_csv():
-        # Error shown inside load_products_from_csv function
+    if not load_products_from_database():
+        # Error shown inside load_products_from_database function
         sys.exit()
     if not load_promo_inventory():
         sys.exit()
