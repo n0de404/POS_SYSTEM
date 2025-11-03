@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import QFileDialog  # Import QFileDialog for file dialog
 import mysql.connector
 from mysql.connector import Error
 from werkzeug.security import check_password_hash, generate_password_hash
-from PIL import Image, ImageQt
+from PIL import Image, ImageQt, ImageOps
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
                              QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
@@ -74,7 +74,10 @@ users_data = {}  # Stores usernames and hashed passwords: {username: {"password_
 current_user_name = None  # Stores the username of the currently logged-in user
 ADMIN_PASSWORD_FILE = "admin_password.txt"
 DEFAULT_ADMIN_PASSWORD = "p@ssw0rd01"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False) and hasattr(sys, "executable"):
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = "users.txt"  # Name of the text file for user credentials
 PRODUCT_IMAGE_FOLDER = os.path.join(BASE_DIR, "product_images")  # Folder where product images are stored
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
@@ -181,13 +184,16 @@ RECEIPT_FONT_NAME = "LucidaConsole"
 FALLBACK_RECEIPT_FONT_NAME = "LucidaConsole"
 RECEIPT_PAGE_WIDTH_MM = 58
 RECEIPT_MARGIN_MM = 0.7
-RECEIPT_TOP_MARGIN_MM = 2
+RECEIPT_TOP_MARGIN_MM = 3
 RECEIPT_BASE_FONT_SIZE = 10
+RECEIPT_BOOTH_SIZE_INCREMENT = 3
+RECEIPT_BOOTH_PREFIX = "Booth #:"
 RECEIPT_MIN_FONT_SIZE = 8
 RECEIPT_PRICE_COLUMN_WIDTH = 10
 RECEIPT_LEFT_COLUMN_TARGET = 24
 RECEIPT_LINE_SPACING_MULTIPLIER = 1.2
-RECEIPT_BOLD_OFFSET_PT = 0.0
+RECEIPT_BOLD_OFFSET_PT = 0.45  # Positive offset doubles the glyph for a bolder appearance
+RECEIPT_SIZE_TAG_PATTERN = re.compile(r"^\s*\[\[size\s*=\s*([0-9]+(?:\.[0-9]+)?)\]\]")
 
 
 def ensure_mysql_locale_support():
@@ -455,6 +461,8 @@ def compute_receipt_layout():
         "printable_width": printable_width,
         "line_spacing": RECEIPT_LINE_SPACING_MULTIPLIER,
         "bold_offset": RECEIPT_BOLD_OFFSET_PT,
+        "booth_header_prefix": RECEIPT_BOOTH_PREFIX,
+        "booth_header_size": max(font_size + RECEIPT_BOOTH_SIZE_INCREMENT, 1.0),
 }
 def build_eye_icon(is_visible, size=22):
     """
@@ -655,21 +663,51 @@ def render_receipt_text(canvas_obj, receipt_text, layout, start_x, start_y):
     Returns the final Y position after rendering.
     """
     font_name = layout["font_name"]
-    font_size = layout["font_size"]
+    base_font_size = layout["font_size"]
     max_chars_per_line = max(int(layout["total_width"]), 1)
-    line_height = font_size * layout.get("line_spacing", RECEIPT_LINE_SPACING_MULTIPLIER)
     bold_offset = layout.get("bold_offset", RECEIPT_BOLD_OFFSET_PT)
+    printable_width = layout.get("printable_width", 0)
     current_y = start_y
+    line_spacing = layout.get("line_spacing", RECEIPT_LINE_SPACING_MULTIPLIER)
+    size_tag_pattern = RECEIPT_SIZE_TAG_PATTERN
+    booth_prefix = layout.get("booth_header_prefix")
+    booth_size = layout.get("booth_header_size")
+    booth_applied = False
     for line in receipt_text.split("\n"):
+        is_booth_line = False
+        line_font_size = base_font_size
+        match = size_tag_pattern.match(line)
+        if match:
+            try:
+                line_font_size = float(match.group(1))
+            except ValueError:
+                line_font_size = base_font_size
+            line = line[match.end():]
+        elif booth_prefix and booth_size and not booth_applied:
+            if line.strip().startswith(booth_prefix):
+                line_font_size = booth_size
+                booth_applied = True
+                is_booth_line = True
+        current_line_height = line_font_size * line_spacing
         if line:
-            remaining = line
-            while remaining:
-                segment = remaining[:max_chars_per_line]
-                _draw_bold_text(canvas_obj, start_x, current_y, segment, font_name, font_size, bold_offset)
-                remaining = remaining[max_chars_per_line:]
-                current_y -= line_height
+            if is_booth_line and printable_width:
+                text_to_draw = line.strip()
+                try:
+                    text_width = pdfmetrics.stringWidth(text_to_draw, font_name, line_font_size)
+                except Exception:
+                    text_width = pdfmetrics.stringWidth(text_to_draw, FALLBACK_RECEIPT_FONT_NAME, line_font_size)
+                text_x = start_x + max((printable_width - text_width) / 2, 0)
+                _draw_bold_text(canvas_obj, text_x, current_y, text_to_draw, font_name, line_font_size, bold_offset)
+                current_y -= current_line_height
+            else:
+                remaining = line
+                while remaining:
+                    segment = remaining[:max_chars_per_line]
+                    _draw_bold_text(canvas_obj, start_x, current_y, segment, font_name, line_font_size, bold_offset)
+                    remaining = remaining[max_chars_per_line:]
+                    current_y -= current_line_height
         else:
-            current_y -= line_height
+            current_y -= current_line_height
     return current_y
 def load_admin_password():
     if os.path.exists(ADMIN_PASSWORD_FILE):
@@ -1971,6 +2009,7 @@ class ReceiptDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Sales Receipt")
         self.resize(400, 700)
+        self._receipt_text_content = receipt_text_content
         layout = QVBoxLayout()
         self.setLayout(layout)
         self.text_edit = QTextEdit()
@@ -1981,11 +2020,14 @@ class ReceiptDialog(QDialog):
         self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
+        self.print_three_checkbox = QCheckBox("Print 3 copies")
+        self.print_three_checkbox.setToolTip("Default prints 2 copies. Check to print 3 copies.")
+        layout.addWidget(self.print_three_checkbox)
         btn_layout = QHBoxLayout()
         layout.addLayout(btn_layout)
         btn_print = QPushButton("Print Receipt")
         btn_print.setStyleSheet("background-color: #007BFF; color: white; font-weight: bold;")
-        btn_print.clicked.connect(lambda: print_receipt_pdf(receipt_text_content, self))
+        btn_print.clicked.connect(self._handle_print_clicked)
         btn_layout.addWidget(btn_print)
         btn_save_pdf = QPushButton("Save as PDF")
         btn_save_pdf.setStyleSheet("background-color: #28A745; color: white; font-weight: bold;")
@@ -1994,6 +2036,11 @@ class ReceiptDialog(QDialog):
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
+
+    def _handle_print_clicked(self):
+        copies = 3 if self.print_three_checkbox.isChecked() else 2
+        print_receipt_pdf(self._receipt_text_content, self, copies)
+
     def save_receipt_as_pdf(self, receipt_text_content):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Receipt as PDF", "", "PDF Files (*.pdf)")
         if file_path:
@@ -3093,6 +3140,12 @@ class PromoManagementDialog(QDialog):
         self.units_spin = QSpinBox()
         self.units_spin.setRange(1, 10000)
         form_layout.addWidget(self.units_spin, 1, 1)
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search Products:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Type stock number or product name to filter…")
+        search_layout.addWidget(self.search_edit, stretch=1)
+        main_layout.addLayout(search_layout)
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Include", "Stock No.", "Product Name", "Base Price", "Promo Price"])
@@ -3149,7 +3202,9 @@ class PromoManagementDialog(QDialog):
         main_layout.addWidget(button_box)
         self.promo_code_combo.currentTextChanged.connect(self.load_promo_data)
         self.units_spin.valueChanged.connect(self.handle_units_changed)
+        self.search_edit.textChanged.connect(self.apply_filter)
         self.load_promo_data(self.promo_code_combo.currentText())
+        self.apply_filter(self.search_edit.text())
     def clear_form(self):
         self.promo_code_combo.blockSignals(True)
         self.promo_code_combo.setCurrentIndex(-1)
@@ -3188,6 +3243,16 @@ class PromoManagementDialog(QDialog):
     def mark_price_custom(self, price_spin, _value):
         if price_spin.isEnabled() and price_spin.hasFocus():
             price_spin.setProperty("promo_custom", True)
+    def apply_filter(self, text):
+        terms = [term for term in (text or "").lower().split() if term]
+        for row, (barcode, index, variant) in enumerate(self.product_rows):
+            variant_name = variant.get("name", "")
+            variant_label = variant_name
+            if len(self.products.get(barcode, [])) > 1:
+                variant_label = f"{variant_name} (variant {index + 1})"
+            haystack = f"{barcode} {variant_name} {variant_label}".lower()
+            matches = all(term in haystack for term in terms)
+            self.table.setRowHidden(row, not matches)
     def load_promo_data(self, promo_code):
         promo_code = (promo_code or "").strip()
         units_value = promo_inventory_map.get(promo_code, 1)
@@ -3329,6 +3394,12 @@ class BundlePromoDialog(QDialog):
         controls_col.addWidget(self.btn_select_bundle_image)
         image_row.addLayout(controls_col)
         header_layout.addLayout(image_row, 3, 0, 1, 4)
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search Products:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Type stock number or name to filter bundle components…")
+        search_layout.addWidget(self.search_edit, stretch=1)
+        main_layout.addLayout(search_layout)
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Qty", "Stock No.", "Product Name", "Base Price", "Total"])
@@ -3384,7 +3455,9 @@ class BundlePromoDialog(QDialog):
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
         self.bundle_code_combo.currentTextChanged.connect(self.load_bundle_data)
+        self.search_edit.textChanged.connect(self.apply_filter)
         self.load_bundle_data(self.bundle_code_combo.currentText())
+        self.apply_filter(self.search_edit.text())
         self.apply_theme_styles()
     def clear_form(self):
         self.bundle_code_combo.blockSignals(True)
@@ -3434,6 +3507,16 @@ class BundlePromoDialog(QDialog):
     def mark_bundle_price_custom(self, _value):
         if self.bundle_price_spin.hasFocus():
             self.bundle_price_spin.setProperty("custom_edit", True)
+    def apply_filter(self, text):
+        terms = [term for term in (text or "").lower().split() if term]
+        for row, (barcode, index, variant) in enumerate(self.product_rows):
+            variant_name = variant.get("name", "")
+            variant_label = variant_name
+            if len(self.products.get(barcode, [])) > 1:
+                variant_label = f"{variant_name} (variant {index + 1})"
+            haystack = f"{barcode} {variant_name} {variant_label}".lower()
+            matches = all(term in haystack for term in terms)
+            self.table.setRowHidden(row, not matches)
     def update_bundle_image_preview(self, source_path=None, filename=None):
         path = None
         if source_path and os.path.exists(source_path):
@@ -3668,8 +3751,13 @@ class BasketPromoDialog(QDialog):
         add_layout = QHBoxLayout()
         main_layout.addLayout(add_layout)
         add_layout.addWidget(QLabel("Add Reward Item:"))
+        variant_selector = QVBoxLayout()
+        self.variant_search_edit = QLineEdit()
+        self.variant_search_edit.setPlaceholderText("Search stock no. or product name…")
+        variant_selector.addWidget(self.variant_search_edit)
         self.variant_combo = QComboBox()
-        add_layout.addWidget(self.variant_combo, stretch=1)
+        variant_selector.addWidget(self.variant_combo)
+        add_layout.addLayout(variant_selector, stretch=1)
         add_layout.addWidget(QLabel("Qty:"))
         self.qty_spin = QSpinBox()
         self.qty_spin.setRange(1, 10000)
@@ -3686,6 +3774,7 @@ class BasketPromoDialog(QDialog):
         main_layout.addWidget(button_box)
         self.variant_options = []
         self.populate_variant_options()
+        self.variant_search_edit.textChanged.connect(self.apply_variant_filter)
         self.populate_tier_combo()
         self.tier_combo.currentIndexChanged.connect(self.handle_tier_selected)
         if self.tier_combo.count() > 0:
@@ -3693,7 +3782,6 @@ class BasketPromoDialog(QDialog):
         else:
             self.clear_form()
     def populate_variant_options(self):
-        self.variant_combo.clear()
         self.variant_options = []
         for barcode in sorted(self.products.keys()):
             variants = self.products[barcode]
@@ -3710,9 +3798,22 @@ class BasketPromoDialog(QDialog):
                     "label": label
                 }
                 self.variant_options.append(option)
-                self.variant_combo.addItem(label, option)
-        if self.variant_options:
+        self.apply_variant_filter(self.variant_search_edit.text())
+    def apply_variant_filter(self, text):
+        terms = [term for term in (text or "").lower().split() if term]
+        self.variant_combo.blockSignals(True)
+        self.variant_combo.clear()
+        for option in self.variant_options:
+            haystack = f"{option['barcode']} {option['name']} {option['label']}".lower()
+            matches = all(term in haystack for term in terms)
+            if matches:
+                self.variant_combo.addItem(option["label"], option)
+        self.variant_combo.blockSignals(False)
+        has_results = self.variant_combo.count() > 0
+        if has_results:
             self.variant_combo.setCurrentIndex(0)
+        self.variant_combo.setEnabled(has_results)
+        self.btn_add_freebie.setEnabled(has_results)
     def populate_tier_combo(self):
         self.tier_combo.blockSignals(True)
         self.tier_combo.clear()
@@ -4012,8 +4113,9 @@ class POSMainWindow(QMainWindow):
         main_layout.addLayout(product_display_frame)
         # Group for Product Info (Image and Details)
         info_group = QGroupBox()
-        info_group.setMaximumWidth(600)  # Adjust as needed to reduce width
-        info_group.setFixedHeight(600)
+        info_group.setMinimumWidth(660)
+        info_group.setMaximumWidth(720)
+        info_group.setFixedHeight(520)
         info_group.setStyleSheet("QGroupBox { border: 1px solid #CCC; border-radius: 8px; background-color: white; }") # Added styling
         info_layout = QVBoxLayout()
         info_group.setLayout(info_layout) # Set layout for the group box
@@ -4023,14 +4125,12 @@ class POSMainWindow(QMainWindow):
         lbl_image_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_image_title.setFont(QFont("Arial", 20, QFont.Weight.Bold))
         info_layout.addWidget(lbl_image_title, alignment=Qt.AlignmentFlag.AlignCenter) # Added directly to info_layout
-        self.default_pixmap = QPixmap(550, 250)
-        self.default_pixmap.fill(QColor("#D9D9D9")) # Changed to a light grey color as per the new image
+        self.default_pixmap = QPixmap(640, 200)
+        self.default_pixmap.fill(QColor("#D9D9D9"))  # Light grey placeholder sized for the preview frame
         self.label_product_image = QLabel()
         self.label_product_image.setPixmap(self.default_pixmap)
-        self.label_product_image.setFixedSize(550, 250)
-        # Removed setFixedSize, using setScaledContents for responsiveness
-        self.label_product_image.setScaledContents(True)
-        self.label_product_image.setMinimumSize(200, 150) # Minimum size for the image area
+        self.label_product_image.setFixedSize(640, 200)
+        self.label_product_image.setMinimumSize(640, 200)  # Minimum size for the image area
         self.label_product_image.setStyleSheet("border: 1px solid black; background-color: white;")
         info_layout.addWidget(self.label_product_image, alignment=Qt.AlignmentFlag.AlignCenter) # Added directly to info_layout
         self.btn_change_image = QPushButton("Change Product Image")
@@ -4482,46 +4582,78 @@ class POSMainWindow(QMainWindow):
                 }
             """)
     def update_action_button_styles(self, theme):
-        """Apply neutral, theme-aware styling to the primary action buttons."""
+        """Apply pastel styling to the primary action buttons."""
         if not hasattr(self, "action_buttons") or not self.action_buttons:
             return
         tokens = get_theme_tokens(theme)
-        if theme == "dark":
-            base = "#1f2937"
-            hover = "#334155"
-            pressed = "#475569"
-            text_color = tokens["title"]
-            border = "#3e4c5e"
-        else:
-            base = "#e8f0ff"
-            hover = "#dbe7ff"
-            pressed = "#cbdfff"
-            text_color = tokens["title"]
-            border = "#b8cfff"
-        disabled_bg = hover if theme == "dark" else "#e1e7f8"
+        pastel_palette = {
+            "DISCOUNT": {
+                "base": "#fde2e4",
+                "hover": "#fbc5d3",
+                "pressed": "#f7a8c2",
+                "border": "#f09ab5",
+                "disabled": "#fbe4e8",
+            },
+            "SET QUANTITY": {
+                "base": "#d5f5e3",
+                "hover": "#bff0d4",
+                "pressed": "#a8eac4",
+                "border": "#92dcb0",
+                "disabled": "#e3f7ed",
+            },
+            "INVENTORY": {
+                "base": "#e2f0ff",
+                "hover": "#cfe5ff",
+                "pressed": "#bdd9ff",
+                "border": "#a7c9f5",
+                "disabled": "#e8f3ff",
+            },
+            "SALES SUMMARY": {
+                "base": "#ede4ff",
+                "hover": "#dcd0ff",
+                "pressed": "#ccbaff",
+                "border": "#bca4f3",
+                "disabled": "#f1eaff",
+            },
+            "VOID": {
+                "base": "#fef3e2",
+                "hover": "#fddfba",
+                "pressed": "#fcc992",
+                "border": "#f5b87c",
+                "disabled": "#feeed4",
+            },
+            "CHECKOUT": {
+                "base": "#daf5ff",
+                "hover": "#c1ecff",
+                "pressed": "#a8e2ff",
+                "border": "#8fd6f5",
+                "disabled": "#e5f8ff",
+            },
+        }
+        text_color = "#1f2937"
         disabled_text = tokens["muted"]
-        disabled_border = border
-        for button in self.action_buttons.values():
+        for label, button in self.action_buttons.items():
+            swatch = pastel_palette.get(label, pastel_palette.get("INVENTORY"))
             button.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: {base};
+                    background-color: {swatch['base']};
                     color: {text_color};
                     border-radius: 12px;
                     padding: 14px 18px;
                     font-size: 22px;
                     font-weight: 600;
-                    border: 1px solid {border};
+                    border: 1px solid {swatch['border']};
                 }}
                 QPushButton:hover {{
-                    background-color: {hover};
+                    background-color: {swatch['hover']};
                 }}
                 QPushButton:pressed {{
-                    background-color: {pressed};
+                    background-color: {swatch['pressed']};
                 }}
                 QPushButton:disabled {{
-                    background-color: {disabled_bg};
+                    background-color: {swatch['disabled']};
                     color: {disabled_text};
-                    border: 1px solid {disabled_border};
+                    border: 1px solid {swatch['border']};
                 }}
             """)
     def remove_existing_freebies_from_cart(self):
@@ -4668,15 +4800,19 @@ class POSMainWindow(QMainWindow):
             if os.path.exists(image_path):
                 try:
                     pil_image = Image.open(image_path)
-                    # Resize image to fit label size, maintaining aspect ratio
                     label_size = self.label_product_image.size()
+                    target_size = (max(1, label_size.width()), max(1, label_size.height()))
                     pil_image = pil_image.convert("RGBA")
-                    pil_image = pil_image.resize((label_size.width(), label_size.height()), Image.Resampling.LANCZOS)
-                    qt_image = ImageQt.ImageQt(pil_image)
+                    fitted = ImageOps.contain(pil_image, target_size, Image.Resampling.LANCZOS)
+                    canvas = Image.new("RGBA", target_size, (255, 255, 255, 0))
+                    offset = (
+                        (target_size[0] - fitted.width) // 2,
+                        (target_size[1] - fitted.height) // 2,
+                    )
+                    canvas.paste(fitted, offset, fitted if fitted.mode == "RGBA" else None)
+                    qt_image = ImageQt.ImageQt(canvas)
                     pixmap = QPixmap.fromImage(qt_image)
-                    # Scale pixmap to fit label size with aspect ratio and smooth transformation
-                    scaled_pixmap = pixmap.scaled(label_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    self.label_product_image.setPixmap(scaled_pixmap)
+                    self.label_product_image.setPixmap(pixmap)
                     return
                 except Exception as e:
                     print(f"Error loading product image {image_path}: {e}")
@@ -5100,7 +5236,8 @@ class POSMainWindow(QMainWindow):
             else:
                 for segment in left_lines:
                     receipt_text_content += f"{segment[:width]}\n"
-        receipt_text_content += f"{'Booth #: A003-A006':^{width}}\n"
+        booth_header_text = "Booth #: A003"
+        receipt_text_content += f"{booth_header_text:^{width}}\n"
         receipt_text_content += f"{'SUNNYWARE PHILIPPINES':^{width}}\n"
         receipt_text_content += f"{'Metro Manila, Philippines':^{width}}\n"
         receipt_text_content += f"{'---SALES ORDER SLIP---':^{width}}\n"
@@ -5897,6 +6034,7 @@ class ReceiptDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Sales Receipt")
         self.resize(400, 700)
+        self._receipt_text_content = receipt_text_content
         layout = QVBoxLayout()
         self.setLayout(layout)
         self.text_edit = QTextEdit()
@@ -5907,11 +6045,14 @@ class ReceiptDialog(QDialog):
         self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
+        self.print_three_checkbox = QCheckBox("Print 3 copies")
+        self.print_three_checkbox.setToolTip("Default prints 2 copies. Check to print 3 copies.")
+        layout.addWidget(self.print_three_checkbox)
         btn_layout = QHBoxLayout()
         layout.addLayout(btn_layout)
         btn_print = QPushButton("Print Receipt")
         btn_print.setStyleSheet("background-color: #007BFF; color: white; font-weight: bold;")
-        btn_print.clicked.connect(lambda: print_receipt_pdf(receipt_text_content, self))
+        btn_print.clicked.connect(self._handle_print_clicked)
         btn_layout.addWidget(btn_print)
         btn_save_pdf = QPushButton("Save as PDF")
         btn_save_pdf.setStyleSheet("background-color: #28A745; color: white; font-weight: bold;")
@@ -5920,6 +6061,11 @@ class ReceiptDialog(QDialog):
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
+
+    def _handle_print_clicked(self):
+        copies = 3 if self.print_three_checkbox.isChecked() else 2
+        print_receipt_pdf(self._receipt_text_content, self, copies)
+
     def save_receipt_as_pdf(self, receipt_text_content):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Receipt as PDF", "", "PDF Files (*.pdf)")
         if file_path:
@@ -5929,10 +6075,21 @@ class ReceiptDialog(QDialog):
             show_info("Save Successful", f"Receipt saved as PDF: {file_path}", self)
 def _normalize_receipt_lines(receipt_text):
     # Convert receipt content (string, list, dict, etc.) into a flat list of printable strings.
+    def strip_size_tag(value):
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            value = str(value)
+        match = RECEIPT_SIZE_TAG_PATTERN.match(value)
+        if match:
+            value = value[match.end():]
+        return value
+    def sanitize(lines):
+        return [strip_size_tag(line) for line in lines]
     if receipt_text is None:
         return []
     if isinstance(receipt_text, str):
-        return receipt_text.splitlines()
+        return sanitize(receipt_text.splitlines())
     if isinstance(receipt_text, dict):
         if "text" in receipt_text:
             text_value = receipt_text.get("text")
@@ -5940,25 +6097,25 @@ def _normalize_receipt_lines(receipt_text):
                 lines = []
                 for item in text_value:
                     lines.extend(_normalize_receipt_lines(item))
-                return lines
+                return sanitize(lines)
             if text_value is None:
                 return [""]
-            return str(text_value).splitlines()
+            return sanitize(str(text_value).splitlines())
         if "lines" in receipt_text and isinstance(receipt_text["lines"], (list, tuple, set)):
             lines = []
             for item in receipt_text["lines"]:
                 lines.extend(_normalize_receipt_lines(item))
-            return lines
-        return [json.dumps(receipt_text, ensure_ascii=False)]
+            return sanitize(lines)
+        return sanitize([json.dumps(receipt_text, ensure_ascii=False)])
     if isinstance(receipt_text, (list, tuple, set)):
         lines = []
         for item in receipt_text:
             lines.extend(_normalize_receipt_lines(item))
-        return lines
-    return str(receipt_text).splitlines()
+        return sanitize(lines)
+    return sanitize(str(receipt_text).splitlines())
 
 
-def print_receipt_pdf(receipt_text, parent=None):
+def print_receipt_pdf(receipt_text, parent=None, copies=None):
     layout = compute_receipt_layout()
     width_mm = RECEIPT_PAGE_WIDTH_MM
     height_mm = 297
@@ -5992,15 +6149,29 @@ def print_receipt_pdf(receipt_text, parent=None):
         return
 
     try:
-        if sys.platform.startswith("win"):
-            os.startfile(temp_pdf_path, "print")
-        elif sys.platform.startswith("darwin"):
-            subprocess.run(["lp", temp_pdf_path], check=True)
-        else:
-            subprocess.run(["lp", temp_pdf_path], check=True)
-        show_info("Print Job", "The receipt has been sent to the printer.", parent)
-    except Exception as exc:
-        show_error("Print Error", f"Failed to print the receipt: {exc}", parent)
+        requested_copies = int(copies) if copies is not None else 2
+    except (TypeError, ValueError):
+        requested_copies = 2
+    copies_to_print = max(requested_copies, 1)
+    for copy_index in range(copies_to_print):
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(temp_pdf_path, "print")
+            elif sys.platform.startswith("darwin"):
+                subprocess.run(["lp", temp_pdf_path], check=True)
+            else:
+                subprocess.run(["lp", temp_pdf_path], check=True)
+        except Exception as exc:
+            show_error(
+                "Print Error",
+                f"Failed to print receipt copy {copy_index + 1}: {exc}",
+                parent,
+            )
+            return
+        if copy_index < copies_to_print - 1:
+            time.sleep(3)
+
+    show_info("Print Job", f"Printed {copies_to_print} receipt copies.", parent)
 def main():
     app = QApplication(sys.argv)
     preferred_theme = load_ui_preferences()
