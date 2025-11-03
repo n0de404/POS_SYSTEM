@@ -48,7 +48,7 @@ from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, Q
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
                              QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton)
 from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush
-from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, pyqtSignal, QTimer
 # --- Global Variables ---
 products = {}  # Stores product data from CSV: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
 cart = []  # Stores items currently in the cart
@@ -4172,9 +4172,13 @@ class POSMainWindow(QMainWindow):
         sku = item.get("Stock No.", "")
         name = item.get("name", "")
         qty = item.get("qty", 1)
+        inventory_usage = item.get("inventory_usage", 1) or 1
+        display_qty = qty * inventory_usage
+        if abs(display_qty - int(display_qty)) < 1e-6:
+            display_qty = int(display_qty)
         line_total = item.get("price", 0) * qty
         suffix = " (Bundle)" if item.get("bundle_components") else ""
-        return f"{sku} - {name}{suffix} x{qty} - P{line_total:.2f}"
+        return f"{sku} - {name}{suffix} x{display_qty} - P{line_total:.2f}"
     def handle_session_after_checkout(self):
         if self.customer_tabs is None or not self.customer_sessions:
             return
@@ -4296,7 +4300,13 @@ class POSMainWindow(QMainWindow):
                 filtered.append(display_text)
         self._completer_model.setStringList(filtered)
     def setup_product_search_signals(self):
+        self._search_selection_in_progress = False
         self._completer.activated.connect(self.on_product_search_selected)
+        self.entry_product_search.activated.connect(self.on_product_search_index_selected)
+    def on_product_search_index_selected(self, index):
+        if index < 0 or getattr(self, "_search_selection_in_progress", False):
+            return
+        self.on_product_search_selected(self.entry_product_search.itemText(index))
     def refresh_product_search_options(self):
         if not hasattr(self, "_completer_model"):
             return
@@ -4588,19 +4598,27 @@ class POSMainWindow(QMainWindow):
         if self.applied_freebies:
             self.update_total()
     def on_product_search_selected(self, selected_text):
+        if not selected_text:
+            return
+        if getattr(self, "_search_selection_in_progress", False):
+            return
+        self._search_selection_in_progress = True
         # Parse barcode from selected_text, update product info display and barcode entry
-        start_idx = selected_text.rfind('(')
-        end_idx = selected_text.rfind(')')
-        if start_idx != -1 and end_idx != -1:
-            sku = selected_text[start_idx + 1:end_idx]
-            if not self.add_item_to_cart_by_sku(sku, show_not_found=False):
-                show_warning("Product Not Found", f"Product with SKU '{sku}' not found in database.", self)
-                self.clear_product_display()
+        try:
+            start_idx = selected_text.rfind('(')
+            end_idx = selected_text.rfind(')')
+            if start_idx != -1 and end_idx != -1:
+                sku = selected_text[start_idx + 1:end_idx]
+                if not self.add_item_to_cart_by_sku(sku, show_not_found=False):
+                    show_warning("Product Not Found", f"Product with SKU '{sku}' not found in database.", self)
+                    self.clear_product_display()
+                else:
+                    self.clear_product_search_entry()
             else:
-                self.clear_product_search_entry()
-        else:
-            show_warning("Format Error", "Invalid product selection format.", self)
-            self.clear_product_display()
+                show_warning("Format Error", "Invalid product selection format.", self)
+                self.clear_product_display()
+        finally:
+            QTimer.singleShot(0, lambda: setattr(self, "_search_selection_in_progress", False))
     def clear_product_display(self):
         self.label_product_name_display.setText("PRODUCT NAME: ")
         self.label_product_price_display.setText("PRICE: ")
@@ -4793,27 +4811,27 @@ class POSMainWindow(QMainWindow):
         """Reset the product search box so the next lookup starts empty."""
         if not hasattr(self, "entry_product_search") or self.entry_product_search is None:
             return
-        try:
-            self.entry_product_search.blockSignals(True)
-            # Clear both the combobox edit buffer and embedded line edit text.
-            self.entry_product_search.clearEditText()
-            self.entry_product_search.setEditText("")
-            line_edit = self.entry_product_search.lineEdit()
-            if line_edit:
-                line_edit.clear()
-                line_edit.setText("")
-                line_edit.setFocus(Qt.FocusReason.OtherFocusReason)
-            if hasattr(self, "_completer_model"):
-                self._completer_model.setStringList(self._product_search_list)
-        finally:
-            self.entry_product_search.blockSignals(False)
-        self.entry_product_search.setCurrentIndex(-1)
-        self.entry_product_search.setEditText("")
-        self.entry_product_search.setCurrentText("")
-        line_edit = self.entry_product_search.lineEdit()
-        if line_edit:
-            line_edit.setText("")
-        self.entry_product_search.hidePopup()
+        def _finalize_clear():
+            try:
+                self.entry_product_search.blockSignals(True)
+                self.entry_product_search.setCurrentIndex(-1)
+                self.entry_product_search.clearEditText()
+                self.entry_product_search.setEditText("")
+                self.entry_product_search.setCurrentText("")
+                line_edit = self.entry_product_search.lineEdit()
+                if line_edit:
+                    line_edit.blockSignals(True)
+                    line_edit.clear()
+                    line_edit.setText("")
+                    line_edit.blockSignals(False)
+                    line_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+                if hasattr(self, "_completer_model"):
+                    self._completer_model.setStringList(self._product_search_list)
+            finally:
+                self.entry_product_search.blockSignals(False)
+            self.entry_product_search.hidePopup()
+        _finalize_clear()
+        QTimer.singleShot(0, _finalize_clear)
     def process_scanned_code(self, barcode_input):
         global current_item_count, current_discount
         barcode_input = (barcode_input or "").strip()
