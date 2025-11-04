@@ -1,0 +1,45 @@
+{"timestamp": "2025-11-04 10:05:08", "user": "cashier", "action": "Viewed activity logs"}
+{"timestamp": "2025-11-04 10:05:17", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-04 10:05:19", "user": "cashier", "action": "Added item to cart", "details": "Monobloc Square Stool x1 (SKU 9516-brown)"}
+{"timestamp": "2025-11-04 10:05:24", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-04 10:05:25", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-04 10:05:25", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-04 10:05:48", "user": "cashier", "action": "Completed checkout", "details": "Total P1,180.00, Paid P1,180.00, Change P0.00, Tender: Cash P1,180.00. Items: 50 L Storage Box x1; Monobloc Square Stool x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-04 10:05:52", "user": "cashier", "action": "Viewed activity logs"}
+{"timestamp": "2025-11-04 10:06:15", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:06:33", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:06:56", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:07:21", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 10:07:25", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:08:13", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:08:26", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 10:10:55", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:17:00", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 10:32:40", "user": "cashier", "action": "Exported sales summary", "details": "Excel | Scope: CURRENT | File: C:/Users/IT/Desktop/22.xlsx"}
+{"timestamp": "2025-11-04 10:32:42", "user": "cashier", "action": "Reset sales summary", "details": "Cleared current session totals"}
+{"timestamp": "2025-11-04 10:32:55", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:33:01", "user": "cashier", "action": "Viewed activity logs"}
+{"timestamp": "2025-11-04 10:33:18", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 10:33:21", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:33:23", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-04 10:33:26", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-04 10:43:05", "user": "cashier", "action": "Completed checkout", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-04 10:43:35", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-04 10:43:36", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-04 10:43:46", "user": "cashier", "action": "Completed checkout", "details": "Total P340.00, Paid P340.00, Change P0.00, Tender: Cash P340.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-04 10:44:04", "user": "cashier", "action": "Exported sales summary", "details": "Excel | Scope: CURRENT | File: C:/Users/IT/Desktop/12.xlsx"}
+{"timestamp": "2025-11-04 10:44:05", "user": "cashier", "action": "Reset sales summary", "details": "Cleared current session totals"}
+{"timestamp": "2025-11-04 10:44:07", "user": "cashier", "action": "Cleared sales tables", "details": "Scope reset: CURRENT"}
+{"timestamp": "2025-11-04 10:44:17", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:44:31", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 10:44:32", "user": "cashier", "action": "Added item to cart", "details": "Christmas set bundle #811, #812,#813 x1 (SKU ST-PT-25-CM-09)"}
+{"timestamp": "2025-11-04 10:44:36", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-04 10:44:39", "user": "cashier", "action": "Completed checkout", "details": "Total P335.00, Paid P335.00, Change P0.00, Tender: Cash P335.00. Items: Christmas set bundle #811, #812,#813 x1"}
+{"timestamp": "2025-11-04 10:51:53", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 12:21:53", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 12:22:18", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 12:22:23", "user": "cashier", "action": "Viewed activity logs"}
+{"timestamp": "2025-11-04 12:23:25", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 12:35:47", "user": "cashier", "action": "Previewed inventory sync", "details": "98 items compared; 22 not in local catalog"}
+{"timestamp": "2025-11-04 12:37:03", "user": "cashier", "action": "Previewed inventory sync", "details": "98 items compared; 22 not in local catalog"}
+{"timestamp": "2025-11-04 12:38:06", "user": "cashier", "action": "Accessed inventory management"}

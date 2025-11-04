@@ -47,7 +47,7 @@ from PIL import Image, ImageQt, ImageOps
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
                              QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
-                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton)
+                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton, QAbstractItemView)
 from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush
 from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, pyqtSignal, QTimer
 # --- Global Variables ---
@@ -81,6 +81,13 @@ else:
 USERS_FILE = "users.txt"  # Name of the text file for user credentials
 PRODUCT_IMAGE_FOLDER = os.path.join(BASE_DIR, "product_images")  # Folder where product images are stored
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
+ACTIVITY_LOG_FILE = os.path.join(BASE_DIR, "activity_logs.jsonl")
+SALES_VAULT_FILE = os.path.join(BASE_DIR, "sales_vault.json")
+# Vault keeps a running ledger across exports so longer periods can be reported later
+sales_summary_vault = {}
+total_cash_tendered_vault = 0.0
+total_gcash_tendered_vault = 0.0
+sales_vault_period_start = None
 # Preferred printer for direct receipt printing on Windows; leave blank to use system default.
 CUSTOM_RECEIPT_PRINTER_NAME = "RONGTA 58mm Series Printer"
 # --- API Integration ---
@@ -733,6 +740,34 @@ def save_admin_password(new_password):
     except Exception as e:
         print(f"Error saving admin password: {e}")
         return False
+def load_activity_logs():
+    """Return all recorded activity log entries from disk."""
+    if not os.path.exists(ACTIVITY_LOG_FILE):
+        return []
+    entries = []
+    try:
+        with open(ACTIVITY_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                record = line.strip()
+                if not record:
+                    continue
+                try:
+                    entries.append(json.loads(record))
+                except ValueError as exc:
+                    print(f"Warning: skipping malformed activity log entry: {exc}")
+    except Exception as exc:
+        print(f"Warning: unable to load activity logs: {exc}")
+    return entries
+def append_activity_log_entry(entry):
+    """Append a single activity log entry to the log file."""
+    try:
+        directory = os.path.dirname(ACTIVITY_LOG_FILE)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+        with open(ACTIVITY_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        print(f"Warning: unable to append activity log entry: {exc}")
 # Load admin password at runtime
 ADMIN_PASSWORD = load_admin_password()
 # ================== Utility MessageBox Helpers ===================
@@ -1838,6 +1873,104 @@ def save_inventory_summary():
 def save_sales_summary():
     """Sales data is stored in MySQL; no file save required."""
     return True
+def purge_sales_tables(parent=None):
+    """Delete all rows from sales_transactions and sales_items."""
+    conn = get_db_connection(parent)
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM sales_items")
+            cursor.execute("DELETE FROM sales_transactions")
+        conn.commit()
+        return True
+    except Error as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        show_error("Database Error", f"Failed to clear sales tables:\n{exc}", parent)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+def ensure_sales_vault_started():
+    """Ensure the vault has a period start timestamp."""
+    global sales_vault_period_start
+    if not sales_vault_period_start:
+        sales_vault_period_start = datetime.now().isoformat(timespec="seconds")
+def load_sales_vault():
+    """Load the persisted sales vault ledger from disk."""
+    global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault, sales_vault_period_start
+    if not os.path.exists(SALES_VAULT_FILE):
+        ensure_sales_vault_started()
+        return
+    try:
+        with open(SALES_VAULT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f) or {}
+    except Exception as exc:
+        print(f"Warning: unable to load sales vault: {exc}")
+        ensure_sales_vault_started()
+        return
+    sales_summary_vault = data.get("summary", {}) or {}
+    total_cash_tendered_vault = float(data.get("cash_total", 0.0) or 0.0)
+    total_gcash_tendered_vault = float(data.get("gcash_total", 0.0) or 0.0)
+    sales_vault_period_start = data.get("period_start") or None
+    ensure_sales_vault_started()
+def save_sales_vault():
+    """Persist the running vault ledger to disk."""
+    ensure_sales_vault_started()
+    payload = {
+        "summary": sales_summary_vault,
+        "cash_total": float(total_cash_tendered_vault),
+        "gcash_total": float(total_gcash_tendered_vault),
+        "period_start": sales_vault_period_start,
+        "last_saved": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        with open(SALES_VAULT_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as exc:
+        print(f"Warning: unable to save sales vault: {exc}")
+def reset_sales_vault(new_start=None):
+    """Clear the vault ledger but immediately begin a new period."""
+    global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault, sales_vault_period_start
+    sales_summary_vault = {}
+    total_cash_tendered_vault = 0.0
+    total_gcash_tendered_vault = 0.0
+    sales_vault_period_start = new_start or datetime.now().isoformat(timespec="seconds")
+    save_sales_vault()
+def fetch_highest_sales_identifiers(parent=None):
+    """Return the highest sales_no and transaction_no recorded in the database."""
+    conn = get_db_connection(parent)
+    if not conn:
+        return 0, 0
+    max_sales = 0
+    max_trans = 0
+    try:
+        with conn.cursor(dictionary=True) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    MAX(CAST(sales_no AS UNSIGNED)) AS max_sales_no,
+                    MAX(CAST(transaction_no AS UNSIGNED)) AS max_transaction_no
+                FROM sales_transactions
+                """
+            )
+            row = cursor.fetchone()
+            if row:
+                max_sales = int(row.get("max_sales_no") or 0)
+                max_trans = int(row.get("max_transaction_no") or 0)
+    except Exception as exc:
+        print(f"Warning: unable to query sales identifiers: {exc}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return max_sales, max_trans
 def save_receipts_archive():
     """
     Synchronize the in-memory receipts archive with the database table.
@@ -2937,6 +3070,92 @@ class InventoryManagementDialog(QDialog):
         if not items:
             show_info("Inventory Sync", "API response did not include any inventory items.", self)
             return
+        preview_rows = []
+        diff_found = False
+        unmatched_remote = 0
+        for entry in items:
+            sku = str(entry.get("sku") or "").strip()
+            if not sku:
+                continue
+            try:
+                api_stock = int(entry.get("stock"))
+            except (TypeError, ValueError):
+                continue
+            local_stock = None
+            if sku in self.products:
+                # Sum all variants that share the SKU
+                variant_stocks = [variant.get("stock") for variant in self.products.get(sku, [])]
+                local_stock = variant_stocks[0] if variant_stocks else 0
+                for variant in self.products.get(sku, []):
+                    # prefer matching by variant index "stock" field
+                    current_stock = variant.get("stock")
+                    break
+            if local_stock is None:
+                unmatched_remote += 1
+                preview_rows.append((sku, "—", api_stock, "Not in local catalog", False))
+                continue
+            if local_stock != api_stock:
+                diff_found = True
+            preview_rows.append((sku, local_stock, api_stock, "", local_stock != api_stock))
+        # Include local entries missing from remote payload
+        local_only_rows = []
+        for sku in sorted(self.products.keys()):
+            if not any(row[0] == sku for row in preview_rows):
+                variant = self.products[sku][0] if self.products[sku] else {}
+                local_stock = variant.get("stock", 0)
+                local_only_rows.append((sku, local_stock, "—", "Missing from API response", False))
+        preview_rows.extend(local_only_rows)
+        if not preview_rows:
+            show_info("Inventory Sync", "No comparable inventory data was found in the API response.", self)
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Inventory Sync Preview")
+        dialog.resize(720, 520)
+        layout = QVBoxLayout(dialog)
+        summary_label = QLabel(
+            "Review the differences below. Items highlighted will be updated if you proceed."
+        )
+        layout.addWidget(summary_label)
+        table = QTableWidget(dialog)
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Stock No.", "Local Stock", "API Stock", "Notes"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.setRowCount(len(preview_rows))
+        for row_index, row_data in enumerate(preview_rows):
+            sku, local_val, api_val, note, is_diff = row_data
+            local_text = "—" if local_val == "—" else f"{local_val}"
+            api_text = "—" if api_val == "—" else f"{api_val}"
+            table.setItem(row_index, 0, QTableWidgetItem(sku))
+            table.setItem(row_index, 1, QTableWidgetItem(local_text))
+            table.setItem(row_index, 2, QTableWidgetItem(api_text))
+            table.setItem(row_index, 3, QTableWidgetItem(note))
+            if is_diff:
+                for col in range(4):
+                    item = table.item(row_index, col)
+                    if item:
+                        item.setBackground(QColor("#fff3cd"))
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(table)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Sync Now")
+        layout.addWidget(button_box)
+        proceed = {"value": False}
+        def accept():
+            proceed["value"] = True
+            dialog.accept()
+        button_box.accepted.connect(accept)
+        button_box.rejected.connect(dialog.reject)
+        # Log preview action
+        parent = self.parent()
+        if parent and hasattr(parent, "log_user_action"):
+            parent.log_user_action(
+                "Previewed inventory sync",
+                f"{len(preview_rows)} items compared; {unmatched_remote} not in local catalog",
+            )
+        dialog.exec()
+        if not proceed["value"]:
+            return
         updated_count = 0
         ignored_count = 0
         for entry in items:
@@ -3076,10 +3295,11 @@ class InventoryManagementDialog(QDialog):
                 self,
             )
         if api_settings.get("clear_sales_summary_after_post"):
-            sales_summary = {}
+            sales_summary.clear()
             total_cash_tendered = 0.0
             total_gcash_tendered = 0.0
             save_sales_summary()
+            save_tendered_amounts()
             parent = self.parent()
             if parent and hasattr(parent, "sales_summary"):
                 parent.sales_summary = sales_summary
@@ -4019,10 +4239,24 @@ class POSMainWindow(QMainWindow):
         self.current_display_variant_index = None
         self.current_display_bundle_code = None
         self.scanner_worker = None
+        self.activity_logs = load_activity_logs()
+        ensure_sales_vault_started()
         self.init_ui()
         self.initialize_customer_queue()
         self.init_barcode_scanner()
         self.showMaximized()
+    def log_user_action(self, action, details=None):
+        """Record a user action with timestamp and optional details."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = {
+            "timestamp": timestamp,
+            "user": self.current_user_name or "Unknown",
+            "action": action,
+        }
+        if details:
+            entry["details"] = details
+        self.activity_logs.append(entry)
+        append_activity_log_entry(entry)
     def init_ui(self):
         # Create layout structure
         main_layout = QHBoxLayout()
@@ -4191,6 +4425,10 @@ class POSMainWindow(QMainWindow):
         view_archive_action = QAction("View Archived Receipts", self)
         view_archive_action.triggered.connect(self.show_archive_labels)
         archive_menu.addAction(view_archive_action)
+        logs_menu = menubar.addMenu("Logs / History")
+        view_logs_action = QAction("View Activity Logs", self)
+        view_logs_action.triggered.connect(self.show_activity_logs)
+        logs_menu.addAction(view_logs_action)
         # Setup signals to handle selection from completer
         self.setup_product_search_signals()
         # Add this in POSMainWindow.__init__ or __init_ui__ after creating self.listbox:    
@@ -4371,26 +4609,21 @@ class POSMainWindow(QMainWindow):
         else:
             self.clear_product_display()
     def void_selected_item(self):
-        """
-        Asks for admin password, then removes the selected item from cart if authorized.
-        """
+        """Remove the selected item from the cart without requiring a password."""
         selected_row = self.listbox.currentRow()
         if selected_row < 0:
             show_warning("Void Item", "Please select an item from the cart to void.", self)
             return
-        # Ask for admin password
-        password, ok = QInputDialog.getText(self, "Admin Authorization", "Enter admin password to void item:", QLineEdit.EchoMode.Password)
-        if not ok:
-            # User cancelled
+        if selected_row >= len(self.cart):
+            show_error("Void Item", "Unable to locate the selected cart item.", self)
             return
-        if password != ADMIN_PASSWORD:
-            show_error("Authorization Failed", "Incorrect admin password. You are not authorized to void items.", self)
-            return
-        # Remove the item from cart and listbox
         voided_item = self.cart.pop(selected_row)
         self.listbox.takeItem(selected_row)
-        # Clear product display since item was removed
+        self.update_total()
         self.clear_product_display()
+        if voided_item:
+            details = f"{voided_item.get('name', 'Unknown Item')} x{voided_item.get('qty', 1)}"
+            self.log_user_action("Voided cart item", details)
         # Update total
         self.update_total()
         show_info("Item Voided", f"'{voided_item['name']}' has been removed from the cart.", self)
@@ -4663,12 +4896,17 @@ class POSMainWindow(QMainWindow):
         indices_to_remove = [idx for idx, item in enumerate(self.cart) if item.get("is_freebie")]
         if not indices_to_remove:
             return
+        removed_details = []
         for offset, idx in enumerate(indices_to_remove):
             adjusted_index = idx - offset
-            self.cart.pop(adjusted_index)
+            removed_item = self.cart.pop(adjusted_index)
+            if removed_item:
+                removed_details.append(f"{removed_item.get('name', 'Freebie')} x{removed_item.get('qty', 1)}")
             if 0 <= adjusted_index < self.listbox.count():
                 self.listbox.takeItem(adjusted_index)
         self.update_total()
+        if removed_details:
+            self.log_user_action("Removed freebies from cart", "; ".join(removed_details))
     def evaluate_basket_freebies(self, subtotal):
         """Return the list of basket promos the subtotal qualifies for."""
         qualified = []
@@ -4731,6 +4969,9 @@ class POSMainWindow(QMainWindow):
             "is_freebie": True
         }
         self.cart.append(item)
+        promo_label = promo_code or "FREEBIE"
+        details = f"{item['name']} x{quantity} ({promo_label})"
+        self.log_user_action("Added freebie to cart", details)
         self.listbox.addItem(f"{barcode} - {item['name']} x{quantity} - FREE")
         return item
     def apply_basket_freebies_to_cart(self, subtotal):
@@ -4762,6 +5003,13 @@ class POSMainWindow(QMainWindow):
                 self.applied_freebie_messages.append(promo_message)
         if self.applied_freebies:
             self.update_total()
+            rendered = []
+            for freebie in self.applied_freebies:
+                promo_label = freebie.get("promo")
+                suffix = f" ({promo_label})" if promo_label else ""
+                rendered.append(f"{freebie.get('name', 'Freebie')} x{freebie.get('qty', 1)}{suffix}")
+            summary = ", ".join(rendered)
+            self.log_user_action("Awarded basket freebies", summary)
     def on_product_search_selected(self, selected_text):
         if not selected_text:
             return
@@ -4909,6 +5157,7 @@ class POSMainWindow(QMainWindow):
                     f"Not enough stock for bundle '{lookup['name']}' components:\n{details}",
                     self
                 )
+                self.log_user_action("Add bundle to cart blocked", f"Insufficient stock for '{lookup['name']}' components")
                 return False
             item = {
                 "name": lookup['name'],
@@ -4925,6 +5174,15 @@ class POSMainWindow(QMainWindow):
                 "image_filename": lookup.get('image_filename'),
             }
             self.cart.append(item)
+            details = f"{item['name']} bundle x{qty} (SKU {lookup['sku']})"
+            if components_copy:
+                component_details = ", ".join(
+                    f"{comp.get('quantity', 0)}x {comp.get('name', comp.get('barcode', ''))}"
+                    for comp in components_copy
+                )
+                if component_details:
+                    details = f"{details} [{component_details}]"
+            self.log_user_action("Added bundle to cart", details)
             self.listbox.addItem(self.format_cart_item_label(item))
             component_summary = ", ".join(
                 f"{component['quantity']}x {component['name']}"
@@ -4964,6 +5222,11 @@ class POSMainWindow(QMainWindow):
             "image_filename": variant.get('image_filename'),
         }
         self.cart.append(item)
+        details = f"{item['name']} x{qty} (SKU {lookup['sku']})"
+        promo_suffix = item.get("promo_code")
+        if promo_suffix:
+            details = f"{details} [Promo {promo_suffix}]"
+        self.log_user_action("Added item to cart", details)
         self.listbox.addItem(self.format_cart_item_label(item))
         self.label_product_name_display.setText(f"Name: {item['name']}")
         self.label_product_price_display.setText(f"Price: P{lookup['price']:.2f}")
@@ -5049,8 +5312,10 @@ class POSMainWindow(QMainWindow):
     def checkout(self):
         global current_sales_number, current_transaction_number, receipts_archive
         global total_cash_tendered, total_gcash_tendered
+        global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault
         if not self.cart:
             show_info("Info", "Cart is empty. Please add items before checking out.", self)
+            self.log_user_action("Checkout cancelled", "Cart empty")
             return
         self.remove_existing_freebies_from_cart()
         self.applied_freebies = []
@@ -5085,6 +5350,7 @@ class POSMainWindow(QMainWindow):
                         f"Unable to complete checkout. Bundle '{item['name']}' lacks stock:\n{details}",
                         self
                     )
+                    self.log_user_action("Checkout blocked", f"Bundle '{item['name']}' insufficient stock")
                     return
             else:
                 base_barcode = item.get('base_stock_no') or item.get('Stock No.')
@@ -5098,6 +5364,7 @@ class POSMainWindow(QMainWindow):
                         f"Product '{base_barcode}' is missing from inventory. Please remove it from the cart.",
                         self
                     )
+                    self.log_user_action("Checkout blocked", f"Inventory record missing for '{base_barcode}'")
                     return
                 if variant_index >= len(variants):
                     variant_index = 0
@@ -5109,6 +5376,7 @@ class POSMainWindow(QMainWindow):
                         f"Product '{name}' only has {available} pcs left, but {required} pcs are needed.",
                         self
                     )
+                    self.log_user_action("Checkout blocked", f"Insufficient stock for '{name}' (need {required}, have {available})")
                     return
         # ... (Existing code for stock availability, total calculation, payment, etc.) ...
         total = 0
@@ -5119,40 +5387,49 @@ class POSMainWindow(QMainWindow):
         subtotal_for_promos = total
         payment_method = self.select_payment_method_dialog()
         if payment_method is None:
+            self.log_user_action("Checkout cancelled", "Payment method dialog closed")
             return
+        self.log_user_action("Selected payment method", payment_method.title())
         cash_amount = 0.0
         gcash_amount = 0.0
         total_paid = 0.0
         if payment_method == "cash only":
             cash_amount_input, ok = QInputDialog.getDouble(self, "Cash Payment", f"Total due: P{total:,.2f}\nEnter cash amount:", min=total)
             if not ok:
+                self.log_user_action("Checkout cancelled", "Cash payment entry cancelled")
                 return
             cash_amount = cash_amount_input
             total_paid = cash_amount
             if total_paid < total:
                 show_error("Payment Error", "Insufficient cash payment. Please pay the full amount.", self)
+                self.log_user_action("Checkout blocked", f"Insufficient cash tendered: P{total_paid:,.2f} of P{total:,.2f}")
                 return
         elif payment_method == "gcash only":
             gcash_amount_input, ok = QInputDialog.getDouble(self, "GCash Payment", f"Total due: P{total:,.2f}\nEnter GCash amount:", min=total)
             if not ok:
+                self.log_user_action("Checkout cancelled", "GCash payment entry cancelled")
                 return
             gcash_amount = gcash_amount_input
             total_paid = gcash_amount
             if total_paid < total:
                 show_error("Payment Error", "Insufficient GCash payment. Please pay the full amount.", self)
+                self.log_user_action("Checkout blocked", f"Insufficient GCash tendered: P{total_paid:,.2f} of P{total:,.2f}")
                 return
         elif payment_method == "cash and gcash":
             cash_amount_input, ok = QInputDialog.getDouble(self, "Cash Payment", f"Total due: P{total:,.2f}\nEnter cash amount (0 for no cash):", min=0)
             if not ok:
+                self.log_user_action("Checkout cancelled", "Cash portion entry cancelled")
                 return
             cash_amount = cash_amount_input
             gcash_amount_input, ok = QInputDialog.getDouble(self, "GCash Payment", f"Total due: P{total:,.2f}\nEnter GCash amount (0 for no GCash):", min=0)
             if not ok:
+                self.log_user_action("Checkout cancelled", "GCash portion entry cancelled")
                 return
             gcash_amount = gcash_amount_input
             total_paid = cash_amount + gcash_amount
             if total_paid < total:
                 show_error("Payment Error", f"Insufficient combined payment. Total paid: P{total_paid:,.2f}\nRemaining due: P{total - total_paid:,.2f}", self)
+                self.log_user_action("Checkout blocked", f"Combined tender short by P{total - total_paid:,.2f}")
                 return
         change = total_paid - total
         self.apply_basket_freebies_to_cart(subtotal_for_promos)
@@ -5174,6 +5451,9 @@ class POSMainWindow(QMainWindow):
                     highest_transaction_number = max(highest_transaction_number, transaction_number)
                 except ValueError:
                     pass  # Ignore keys that don't have a valid transaction number
+        db_sales_highest, db_transaction_highest = fetch_highest_sales_identifiers(self)
+        highest_sales_number = max(highest_sales_number, db_sales_highest)
+        highest_transaction_number = max(highest_transaction_number, db_transaction_highest)
         # Calculate the next available sales number and transaction number
         next_sales_number = highest_sales_number + 1
         next_transaction_number = highest_transaction_number + 1
@@ -5270,12 +5550,16 @@ class POSMainWindow(QMainWindow):
             append_columns("GCash:", f"P{gcash_amount:,.2f}")
             total_gcash_tendered += gcash_amount
             total_cash_tendered += cash_amount
+            total_cash_tendered_vault += cash_amount
+            total_gcash_tendered_vault += gcash_amount
         elif payment_method == "cash only":
             append_columns("Cash:", f"P{cash_amount:,.2f}")
             total_cash_tendered += cash_amount
+            total_cash_tendered_vault += cash_amount
         elif payment_method == "gcash only":
             append_columns("GCash:", f"P{gcash_amount:,.2f}")
             total_gcash_tendered += gcash_amount
+            total_gcash_tendered_vault += gcash_amount
         append_columns("Change:", f"P{change:,.2f}")
         append_columns(f"Payment Method: {payment_method.title()}")
         receipt_text_content += "-" * width + "\n"
@@ -5331,7 +5615,10 @@ class POSMainWindow(QMainWindow):
                     if not is_freebie:
                         if barcode not in sales_summary:
                             sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
+                        if barcode not in sales_summary_vault:
+                            sales_summary_vault[barcode] = {"qty_sold": 0, "revenue": 0.0}
                         sales_summary[barcode]["qty_sold"] += quantity
+                        sales_summary_vault[barcode]["qty_sold"] += quantity
                     if total_base_value > 0:
                         share = info["base_value"] / total_base_value
                     else:
@@ -5339,6 +5626,7 @@ class POSMainWindow(QMainWindow):
                     component_total = 0.0 if is_freebie else item['price'] * bundle_qty * share
                     if not is_freebie:
                         sales_summary[barcode]["revenue"] += component_total
+                        sales_summary_vault[barcode]["revenue"] += component_total
                     price_per_unit = (component_total / quantity) if quantity and component_total else 0.0
                     if product_id:
                         sale_items_records.append({
@@ -5370,8 +5658,12 @@ class POSMainWindow(QMainWindow):
             if not is_freebie:
                 if base_barcode not in sales_summary:
                     sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
+                if base_barcode not in sales_summary_vault:
+                    sales_summary_vault[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
                 sales_summary[base_barcode]["qty_sold"] += deduction_units
                 sales_summary[base_barcode]["revenue"] += line_total_amount
+                sales_summary_vault[base_barcode]["qty_sold"] += deduction_units
+                sales_summary_vault[base_barcode]["revenue"] += line_total_amount
             price_per_unit = (line_total_amount / deduction_units) if deduction_units and line_total_amount else 0.0
             if product_id:
                 sale_items_records.append({
@@ -5399,7 +5691,32 @@ class POSMainWindow(QMainWindow):
         # Save data after checkout
         save_sales_summary()
         save_receipts_archive()
+        save_sales_vault()
         save_inventory_summary()
+        tender_segments = []
+        if cash_amount > 0:
+            tender_segments.append(f"Cash P{cash_amount:,.2f}")
+        if gcash_amount > 0:
+            tender_segments.append(f"GCash P{gcash_amount:,.2f}")
+        tender_detail = ", ".join(tender_segments) if tender_segments else payment_method.title()
+        item_descriptions = []
+        for entry in self.cart:
+            label = entry.get("name") or entry.get("Stock No.") or "Item"
+            qty = entry.get("qty", 1)
+            if entry.get("is_freebie"):
+                label = f"{label} (FREE)"
+            item_descriptions.append(f"{label} x{qty}")
+        if len(item_descriptions) > 10:
+            visible = item_descriptions[:10]
+            remaining = len(item_descriptions) - 10
+            visible.append(f"... +{remaining} more")
+        else:
+            visible = item_descriptions
+        cart_summary = "; ".join(visible) if visible else "No items recorded"
+        self.log_user_action(
+            "Completed checkout",
+            f"Total P{total:,.2f}, Paid P{total_paid:,.2f}, Change P{change:,.2f}, Tender: {tender_detail}. Items: {cart_summary}",
+        )
         # Clear cart and UI
         self.cart.clear()
         self.listbox.clear()
@@ -5508,12 +5825,14 @@ class POSMainWindow(QMainWindow):
             global current_discount
             current_discount = disc
             show_info("Discount Set", f"Discount for next item set to {current_discount:.2f}%", self)
+            self.log_user_action("Set next item discount", f"{current_discount:.2f}%")
     def set_item_count(self):
         count, ok = QInputDialog.getInt(self, "Set Item Quantity", "Enter item quantity (1 or more):", min=1)
         if ok:
             global current_item_count
             current_item_count = count
             show_info("Item Quantity Set", f"Quantity for next item set to {current_item_count}", self)
+            self.log_user_action("Set next item quantity", str(current_item_count))
     def inventory_management(self):
         dlg = InventoryManagementDialog(products, self)  # Pass the global products dictionary
         dlg.exec()
@@ -5523,9 +5842,62 @@ class POSMainWindow(QMainWindow):
         self.refresh_product_search_options()
         save_inventory_summary()
         save_products_to_database(self)
+        self.log_user_action("Accessed inventory management")
     def summary_view(self):
         dlg = SalesSummaryDialog(self)
         dlg.exec()
+        self.log_user_action("Viewed sales summary")
+    def show_activity_logs(self):
+        password, ok = QInputDialog.getText(
+            self,
+            "Admin Authorization Required",
+            "Enter admin password to open activity logs:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return
+        if password != ADMIN_PASSWORD:
+            show_error("Authorization Failed", "Invalid admin password.", self)
+            return
+        self.log_user_action("Viewed activity logs")
+        logs = load_activity_logs()
+        self.activity_logs = logs
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Activity Logs")
+        dialog.resize(940, 520)
+        layout = QVBoxLayout(dialog)
+        header_label = QLabel(f"Recorded events: {len(logs)}")
+        header_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(header_label)
+        table = QTableWidget(dialog)
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Timestamp", "User", "Action", "Details"])
+        table.setRowCount(len(logs))
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        header_view = table.horizontalHeader()
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        for row, entry in enumerate(logs):
+            timestamp_item = QTableWidgetItem(str(entry.get("timestamp", "")))
+            user_item = QTableWidgetItem(str(entry.get("user", "")))
+            action_item = QTableWidgetItem(str(entry.get("action", "")))
+            details_item = QTableWidgetItem(str(entry.get("details", "")))
+            table.setItem(row, 0, timestamp_item)
+            table.setItem(row, 1, user_item)
+            table.setItem(row, 2, action_item)
+            table.setItem(row, 3, details_item)
+        table.verticalHeader().setVisible(False)
+        layout.addWidget(table)
+        close_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_box.rejected.connect(dialog.reject)
+        layout.addWidget(close_box)
+        if logs:
+            table.scrollToBottom()
+        dialog.exec()
     def show_archive_labels(self):
         dlg = ArchiveDialog(self)
         dlg.exec()
@@ -5581,6 +5953,17 @@ class SalesSummaryDialog(QDialog):
         side_layout = QVBoxLayout(side_panel)
         side_layout.setContentsMargins(12, 8, 12, 8)
         side_layout.setSpacing(16)
+        scope_label = QLabel("View Totals For")
+        scope_label.setObjectName("MetricTitle")
+        self.scope_selector = QComboBox()
+        self.scope_selector.setObjectName("MetricScopeSelector")
+        self.scope_selector.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.scope_selector.currentIndexChanged.connect(self.on_scope_changed)
+        side_layout.addWidget(scope_label)
+        side_layout.addWidget(self.scope_selector)
+        self.vault_period_label = QLabel("")
+        self.vault_period_label.setObjectName("MetricSubtitle")
+        side_layout.addWidget(self.vault_period_label)
         metrics_grid = QGridLayout()
         metrics_grid.setHorizontalSpacing(12)
         metrics_grid.setVerticalSpacing(12)
@@ -5612,6 +5995,7 @@ class SalesSummaryDialog(QDialog):
         main_layout.addWidget(content_card)
         self.export_excel_button.clicked.connect(self.export_to_excel)
         self.export_pdf_button.clicked.connect(self.export_to_pdf)
+        self.refresh_scope_selector()
         self.populate_sales_summary()
         self.update_metrics()
         self.apply_theme_styles()
@@ -5721,10 +6105,26 @@ class SalesSummaryDialog(QDialog):
                 color: {tokens['muted']};
                 letter-spacing: 0.05em;
             }}
+            QLabel#MetricSubtitle {{
+                font-size: 11px;
+                color: {tokens['subtitle']};
+            }}
             QLabel#MetricValue {{
                 font-size: 18px;
                 font-weight: 600;
                 color: {tokens['title']};
+            }}
+            QComboBox#MetricScopeSelector {{
+                padding: 8px 12px;
+                border-radius: 10px;
+                border: 1px solid {button_border};
+                background-color: {tokens['background']};
+                color: {tokens['text']};
+            }}
+            QComboBox#MetricScopeSelector QListView {{
+                background-color: {tokens['card_bg']};
+                color: {tokens['text']};
+                border-radius: 8px;
             }}
             QPushButton#SummaryAction {{
                 background-color: {button_bg};
@@ -5768,199 +6168,307 @@ class SalesSummaryDialog(QDialog):
         palette.setColor(QPalette.ColorRole.Text, QColor(tokens["text"]))
         self.table.setPalette(palette)
         self.table.viewport().setAutoFillBackground(True)
+    def current_scope(self):
+        data = self.scope_selector.currentData()
+        return data if data in {"current", "vault"} else "current"
+    def refresh_scope_selector(self):
+        prior_scope = self.current_scope()
+        self.scope_selector.blockSignals(True)
+        self.scope_selector.clear()
+        self.scope_selector.addItem("Current Session Totals", userData="current")
+        vault_label = f"Vault Period (since {self._format_period_start()})"
+        self.scope_selector.addItem(vault_label, userData="vault")
+        if prior_scope == "vault":
+            self.scope_selector.setCurrentIndex(1)
+        else:
+            self.scope_selector.setCurrentIndex(0)
+        self.scope_selector.blockSignals(False)
+        self.update_vault_info_label()
+    def _format_period_start(self):
+        start = sales_vault_period_start
+        if not start:
+            return "unknown"
+        try:
+            dt = datetime.fromisoformat(start)
+            return dt.strftime("%b %d, %Y %I:%M %p")
+        except ValueError:
+            return start
+    def update_vault_info_label(self):
+        scope = self.current_scope()
+        if scope == "vault":
+            self.vault_period_label.setText("Vault accumulates until you reset the period.")
+        else:
+            self.vault_period_label.setText("Session resets only when you choose to clear it.")
+    def on_scope_changed(self, *_args):
+        self.update_vault_info_label()
+        self.populate_sales_summary()
+        self.update_metrics()
+    def get_scope_dataset(self, scope=None):
+        scope = scope or self.current_scope()
+        parent = self.parent()
+        products_map = getattr(parent, "products", {})
+        if scope == "vault":
+            data = sales_summary_vault
+            cash_total = total_cash_tendered_vault
+            gcash_total = total_gcash_tendered_vault
+        else:
+            data = getattr(parent, "sales_summary", sales_summary)
+            cash_total = total_cash_tendered
+            gcash_total = total_gcash_tendered
+        return products_map, data, cash_total, gcash_total
     def populate_sales_summary(self):
-        products = self.parent().products
-        self.table.setRowCount(len(products))
-        row = 0
-        for barcode, variants in products.items():
-            product_name = variants[0]['name']
-            sales_data = self.parent().sales_summary.get(barcode, {"qty_sold": 0, "revenue": 0.0})
-            quantity_sold = sales_data['qty_sold']
-            total_revenue = sales_data['revenue']
-            price_per_item = total_revenue / quantity_sold if quantity_sold > 0 else 0.0
-            total_price = price_per_item * quantity_sold
+        products, dataset, *_ = self.get_scope_dataset()
+        all_codes = sorted(set(products.keys()) | set(dataset.keys()))
+        self.table.setRowCount(len(all_codes))
+        for row, barcode in enumerate(all_codes):
+            variants = products.get(barcode, [])
+            variant = variants[0] if variants else {}
+            product_name = variant.get('name', barcode)
+            sales_data = dataset.get(barcode, {"qty_sold": 0, "revenue": 0.0})
+            quantity_sold = sales_data.get('qty_sold', 0)
+            total_revenue = sales_data.get('revenue', 0.0)
+            price_per_item = total_revenue / quantity_sold if quantity_sold else 0.0
             self.table.setItem(row, 0, QTableWidgetItem(barcode))
             self.table.setItem(row, 1, QTableWidgetItem(product_name))
             self.table.setItem(row, 2, QTableWidgetItem(f"{quantity_sold:,}"))
             self.table.setItem(row, 3, QTableWidgetItem(f"P{price_per_item:,.2f}"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"P{total_price:,.2f}"))
-            row += 1
+            self.table.setItem(row, 4, QTableWidgetItem(f"P{total_revenue:,.2f}"))
     def update_metrics(self):
-        sales_data = self.parent().sales_summary
-        total_quantity_sold = sum(data['qty_sold'] for data in sales_data.values())
-        total_revenue = sum(data['revenue'] for data in sales_data.values())
-        global total_cash_tendered, total_gcash_tendered
+        products, dataset, cash_total, gcash_total = self.get_scope_dataset()
+        total_quantity_sold = sum(data.get('qty_sold', 0) for data in dataset.values())
+        total_revenue = sum(data.get('revenue', 0.0) for data in dataset.values())
         best_code = None
         best_qty = 0
-        for barcode, data in sales_data.items():
-            if data['qty_sold'] > best_qty:
-                best_qty = data['qty_sold']
+        for barcode, data in dataset.items():
+            qty = data.get('qty_sold', 0)
+            if qty > best_qty:
+                best_qty = qty
                 best_code = barcode
         top_label = "No sales recorded yet"
-        if best_code and best_code in self.parent().products:
-            product_name = self.parent().products[best_code][0]['name']
+        if best_code:
+            if best_code in products and products[best_code]:
+                product_name = products[best_code][0].get('name', best_code)
+            else:
+                product_name = best_code
             top_label = f"{product_name}\n{best_qty:,} sold"
         self.metric_labels["items"].setText(f"{total_quantity_sold:,}")
         self.metric_labels["revenue"].setText(f"P{total_revenue:,.2f}")
-        self.metric_labels["cash"].setText(f"P{total_cash_tendered:,.2f}")
-        self.metric_labels["gcash"].setText(f"P{total_gcash_tendered:,.2f}")
+        self.metric_labels["cash"].setText(f"P{cash_total:,.2f}")
+        self.metric_labels["gcash"].setText(f"P{gcash_total:,.2f}")
         self.metric_labels["top"].setText(top_label)
+    def _assemble_sales_rows(self, products, dataset):
+        all_codes = set(products.keys()) | set(dataset.keys())
+        rows = []
+        for barcode in sorted(all_codes):
+            record = dataset.get(barcode) or {}
+            qty_sold = record.get("qty_sold", 0)
+            revenue = float(record.get("revenue", 0.0) or 0.0)
+            if qty_sold <= 0 and abs(revenue) < 0.0001:
+                continue
+            variants = products.get(barcode, [])
+            product_name = variants[0].get("name", barcode) if variants else barcode
+            price_per_item = revenue / qty_sold if qty_sold else 0.0
+            rows.append({
+                "STOCK #": barcode,
+                "Product Name": product_name,
+                "Quantity Sold": qty_sold,
+                "Unit Price": price_per_item,
+                "Total Revenue": revenue,
+            })
+        return rows
+    def _post_export_reset_prompt(self, scope, label, file_path):
+        parent = self.parent()
+        if parent and hasattr(parent, "log_user_action"):
+            parent.log_user_action(
+                "Exported sales summary",
+                f"{label} | Scope: {scope.upper()} | File: {file_path}",
+            )
+        prompt_text = (
+            "Do you want to reset the vault period now?"
+            if scope == "vault"
+            else "Do you want to reset the current session totals now?"
+        )
+        result = QMessageBox.question(
+            self,
+            "Reset Totals?",
+            prompt_text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result == QMessageBox.StandardButton.Yes:
+            self.reset_scope(scope)
+            db_prompt = QMessageBox.question(
+                self,
+                "Clear Database Sales Records?",
+                "Do you also want to clear recorded sales rows from the database tables?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if db_prompt == QMessageBox.StandardButton.Yes:
+                if purge_sales_tables(self):
+                    if parent and hasattr(parent, "log_user_action"):
+                        parent.log_user_action("Cleared sales tables", f"Scope reset: {scope.upper()}")
+                    show_info("Sales Records Cleared", "sales_transactions and sales_items tables have been cleared.", self)
+        else:
+            # Refresh views so any new data is reflected.
+            self.populate_sales_summary()
+            self.update_metrics()
+    def reset_scope(self, scope, quiet=False):
+        parent = self.parent()
+        if scope == "vault":
+            reset_sales_vault()
+            ensure_sales_vault_started()
+            save_sales_vault()
+            if parent and hasattr(parent, "log_user_action") and not quiet:
+                parent.log_user_action("Reset sales vault", f"New period started {self._format_period_start()}")
+        else:
+            global sales_summary, total_cash_tendered, total_gcash_tendered
+            sales_summary.clear()
+            total_cash_tendered = 0.0
+            total_gcash_tendered = 0.0
+            save_sales_summary()
+            save_tendered_amounts()
+            if parent and hasattr(parent, "sales_summary"):
+                parent.sales_summary = sales_summary
+            if parent and hasattr(parent, "log_user_action") and not quiet:
+                parent.log_user_action("Reset sales summary", "Cleared current session totals")
+        self.refresh_scope_selector()
+        self.populate_sales_summary()
+        self.update_metrics()
     def export_to_excel(self):
-        global sales_summary, total_cash_tendered, total_gcash_tendered
-        products = self.parent().products
-        sales_data = self.parent().sales_summary
-        if not products:
-            QMessageBox.information(self, "No Data", "No product data to export.")
+        scope = self.current_scope()
+        products, dataset, cash_total, gcash_total = self.get_scope_dataset(scope)
+        rows = self._assemble_sales_rows(products, dataset)
+        if not rows:
+            QMessageBox.information(self, "No Data", "No sales data to export.")
             return
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Sales Summary to Excel", "", "Excel Files (*.xlsx *.xls)")
         if not file_path:
             return
-        if not (file_path.lower().endswith('.xlsx') or file_path.lower().endswith('.xls')):
-            file_path += '.xlsx'
+        if not (file_path.lower().endswith(".xlsx") or file_path.lower().endswith(".xls")):
+            file_path += ".xlsx"
         try:
-            rows = []
-            for barcode, variants in products.items():
-                product_name = variants[0]['name']
-                data_item = sales_data.get(barcode, {"qty_sold": 0, "revenue": 0.0})
-                qty_sold = data_item['qty_sold']
-                revenue = data_item['revenue']
-                price_per_item = revenue / qty_sold if qty_sold > 0 else 0.0
-                total_price = price_per_item * qty_sold
-                rows.append({
-                    "STOCK #": barcode,
-                    "Product Name": product_name,
-                    "Quantity Sold": qty_sold,
-                    "Price": price_per_item,
-                    "Total Revenue": total_price
-                })
-            df = pd.DataFrame(rows, columns=["STOCK #", "Product Name", "Quantity Sold", "Price", "Total Revenue"])
+            df = pd.DataFrame(rows, columns=["STOCK #", "Product Name", "Quantity Sold", "Unit Price", "Total Revenue"])
             total_qty = df["Quantity Sold"].sum()
             total_revenue = df["Total Revenue"].sum()
             totals_df = pd.DataFrame([{
                 "STOCK #": "",
                 "Product Name": "Totals",
                 "Quantity Sold": total_qty,
-                "Price": "",
-                "Total Revenue": total_revenue
+                "Unit Price": "",
+                "Total Revenue": total_revenue,
             }])
-            df = pd.concat([df, totals_df], ignore_index=True)
-            with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
-                df.to_excel(writer, sheet_name='Sales Summary', index=False)
+            df_with_totals = pd.concat([df, totals_df], ignore_index=True)
+            with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
+                df_with_totals.to_excel(writer, sheet_name="Sales Summary", index=False)
                 workbook = writer.book
-                worksheet = writer.sheets['Sales Summary']
-                currency_format = workbook.add_format({'num_format': 'Php #,##0.00'})
-                worksheet.set_column('D:D', 18, currency_format)
-                worksheet.set_column('E:E', 18, currency_format)
-                bold_format = workbook.add_format({'bold': True})
-                totals_row = len(df) - 1
+                worksheet = writer.sheets["Sales Summary"]
+                currency_format = workbook.add_format({"num_format": "Php #,##0.00"})
+                qty_format = workbook.add_format({"num_format": "#,##0"})
+                worksheet.set_column("C:C", 18, qty_format)
+                worksheet.set_column("D:D", 18, currency_format)
+                worksheet.set_column("E:E", 18, currency_format)
+                bold_format = workbook.add_format({"bold": True})
+                totals_row = len(df_with_totals) - 1
                 worksheet.set_row(totals_row, None, bold_format)
-                row_after = len(df) + 1
+                row_after = len(df_with_totals) + 1
                 worksheet.write(row_after, 0, "Cash:")
-                worksheet.write(row_after, 1, total_cash_tendered, currency_format)
+                worksheet.write(row_after, 1, cash_total, currency_format)
                 worksheet.write(row_after + 1, 0, "GCash:")
-                worksheet.write(row_after + 1, 1, total_gcash_tendered, currency_format)
+                worksheet.write(row_after + 1, 1, gcash_total, currency_format)
             QMessageBox.information(self, "Export Successful", f"Sales summary has been exported to:\n{file_path}")
+            self._post_export_reset_prompt(scope, "Excel", file_path)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export sales summary to Excel:\n{e}")
-        sales_summary = {}
-        total_cash_tendered = 0.0
-        total_gcash_tendered = 0.0
-        save_sales_summary()
-        self.populate_sales_summary()
-        self.update_metrics()
     def export_to_pdf(self):
-        sales_data = self.parent().sales_summary
-        products = self.parent().products
-        if not products:
+        scope = self.current_scope()
+        products, dataset, cash_total, gcash_total = self.get_scope_dataset(scope)
+        rows = self._assemble_sales_rows(products, dataset)
+        if not rows:
             QMessageBox.information(self, "No Data", "No sales data to export.")
             return
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Sales Summary to PDF", "", "PDF Files (*.pdf)")
         if not file_path:
             return
-        if not file_path.lower().endswith('.pdf'):
-            file_path += '.pdf'
+        if not file_path.lower().endswith(".pdf"):
+            file_path += ".pdf"
         try:
-            doc = SimpleDocTemplate(file_path, pagesize=A4,
-                                    rightMargin=40, leftMargin=40,
-                                    topMargin=60, bottomMargin=40)
+            doc = SimpleDocTemplate(
+                file_path,
+                pagesize=A4,
+                rightMargin=40,
+                leftMargin=40,
+                topMargin=60,
+                bottomMargin=40,
+            )
             styles = getSampleStyleSheet()
-            elements = []
-            title_style = styles['Heading1']
+            title_style = styles["Heading1"]
             title_style.fontSize = 24
             title_style.leading = 30
             title_style.alignment = 1
-            elements.append(Paragraph("Sales Summary Report", title_style))
-            elements.append(Spacer(1, 24))
-            data = [["STOCK #", "Product Name", "Quantity", "Price", "Revenue"]]
-            max_qty = -1
-            most_demanded_name = None
+            elements = [
+                Paragraph("Sales Summary Report", title_style),
+                Spacer(1, 24),
+            ]
+            headers = ["STOCK #", "Product Name", "Quantity Sold", "Unit Price", "Total Revenue"]
+            table_data = [headers]
             total_quantity_sold = 0
             total_revenue = 0.0
-            for barcode, variants in products.items():
-                product_name = variants[0]['name']
-                data_item = sales_data.get(barcode, {"qty_sold": 0, "revenue": 0.0})
-                qty_sold = data_item['qty_sold']
-                revenue = data_item['revenue']
-                price_per_item = revenue / qty_sold if qty_sold > 0 else 0
-                total_price = price_per_item * qty_sold
-                data.append([
-                    barcode,
-                    product_name,
-                    str(qty_sold),
-                    f"P{price_per_item:,.2f}",
-                    f"P{total_price:,.2f}"
-                ])
-                total_quantity_sold += qty_sold
+            max_qty = -1
+            most_demanded_name = None
+            for entry in rows:
+                qty = entry["Quantity Sold"]
+                revenue = entry["Total Revenue"]
+                unit_price = entry["Unit Price"]
+                total_quantity_sold += qty
                 total_revenue += revenue
-                if qty_sold > max_qty:
-                    max_qty = qty_sold
-                    most_demanded_name = product_name
-            table_style = TableStyle([
+                if qty > max_qty:
+                    max_qty = qty
+                    most_demanded_name = entry["Product Name"]
+                table_data.append([
+                    entry["STOCK #"],
+                    entry["Product Name"],
+                    f"{qty:,}",
+                    f"P{unit_price:,.2f}",
+                    f"P{revenue:,.2f}",
+                ])
+            sales_table = Table(table_data, colWidths=[70, 180, 80, 80, 110])
+            sales_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#1f2937")),
                 ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'LucidaConsole'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#d1d5db")),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, 0), 14),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#d1d5db")),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")])
-            ])
-            col_widths = [70, 180, 80, 80, 100]
-            sales_table = Table(data, colWidths=col_widths)
-            sales_table.setStyle(table_style)
+            ]))
             elements.append(sales_table)
             elements.append(Spacer(1, 24))
-            normal_style = styles['Normal']
-            normal_style.fontSize = 16
-            normal_style.textColor = colors.HexColor("#6b7280")
-            elements.append(Paragraph(f"<b>Total Items Sold:</b> {total_quantity_sold}", normal_style))
-            elements.append(Paragraph(f"<b>Total Revenue:</b> P{total_revenue:,.2f}", normal_style))
-            global total_cash_tendered, total_gcash_tendered
-            elements.append(Paragraph(f"<b>Cash Tendered:</b> P{total_cash_tendered:,.2f}", normal_style))
-            elements.append(Paragraph(f"<b>GCash Tendered:</b> P{total_gcash_tendered:,.2f}", normal_style))
+            summary_style = styles['Normal']
+            summary_style.fontSize = 16
+            summary_style.textColor = colors.HexColor("#6b7280")
+            elements.append(Paragraph(f"<b>Total Items Sold:</b> {total_quantity_sold:,}", summary_style))
+            elements.append(Paragraph(f"<b>Total Revenue:</b> P{total_revenue:,.2f}", summary_style))
+            elements.append(Paragraph(f"<b>Cash Tendered:</b> P{cash_total:,.2f}", summary_style))
+            elements.append(Paragraph(f"<b>GCash Tendered:</b> P{gcash_total:,.2f}", summary_style))
             elements.append(Spacer(1, 24))
             heading2_style = styles['Heading2']
             heading2_style.textColor = colors.HexColor("#6b7280")
             heading2_style.fontSize = 20
-            elements.append(Paragraph("Most In Demand Item", heading2_style))
+            elements.append(Paragraph("Most In-Demand Item", heading2_style))
             demand_style = styles['Normal']
             demand_style.fontSize = 16
             elements.append(Spacer(1, 6))
             if most_demanded_name:
-                elements.append(Paragraph(f"{most_demanded_name} (Sold: {max_qty} units)", demand_style))
+                elements.append(Paragraph(f"{most_demanded_name} (Sold: {max_qty:,} units)", demand_style))
             else:
                 elements.append(Paragraph("No sales data available", demand_style))
             doc.build(elements)
             QMessageBox.information(self, "Export Successful", f"Sales summary has been exported to:\n{file_path}")
+            self._post_export_reset_prompt(scope, "PDF", file_path)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export sales summary to PDF:\n{e}")
-        sales_summary = {}
-        total_cash_tendered = 0.0
-        total_gcash_tendered = 0.0
-        save_sales_summary()
-        self.populate_sales_summary()
-        self.update_metrics()
 class ArchiveDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -6129,6 +6637,8 @@ def print_receipt_pdf(receipt_text, parent=None, copies=None):
             temp_pdf_path = temp_pdf.name
     except Exception as exc:
         show_error("Print Error", f"Failed to create temporary PDF file:\n{exc}", parent)
+        if parent and hasattr(parent, "log_user_action"):
+            parent.log_user_action("Print job failed", f"Temporary PDF creation error: {exc}")
         return
 
     try:
@@ -6146,6 +6656,8 @@ def print_receipt_pdf(receipt_text, parent=None, copies=None):
         c.save()
     except Exception as exc:
         show_error("Print Error", f"Failed to generate receipt PDF:\n{exc}", parent)
+        if parent and hasattr(parent, "log_user_action"):
+            parent.log_user_action("Print job failed", f"Receipt render error: {exc}")
         return
 
     try:
@@ -6167,11 +6679,15 @@ def print_receipt_pdf(receipt_text, parent=None, copies=None):
                 f"Failed to print receipt copy {copy_index + 1}: {exc}",
                 parent,
             )
+            if parent and hasattr(parent, "log_user_action"):
+                parent.log_user_action("Print job failed", f"Copy {copy_index + 1} error: {exc}")
             return
         if copy_index < copies_to_print - 1:
             time.sleep(3)
 
     show_info("Print Job", f"Printed {copies_to_print} receipt copies.", parent)
+    if parent and hasattr(parent, "log_user_action"):
+        parent.log_user_action("Printed receipt", f"{copies_to_print} copies")
 def main():
     app = QApplication(sys.argv)
     preferred_theme = load_ui_preferences()
@@ -6192,6 +6708,7 @@ def main():
     # Load saved data
     load_inventory_summary()
     load_sales_summary()
+    load_sales_vault()
     load_receipts_archive()
     load_tendered_amounts()  # Load tendered amounts at startup
     login_dlg = LoginDialog()
@@ -6203,6 +6720,7 @@ def main():
         save_inventory_summary()
         save_sales_summary()
         save_receipts_archive()
+        save_sales_vault()
         save_tendered_amounts()  # Save tendered amounts before closing
         sys.exit(exit_code)
     else:
