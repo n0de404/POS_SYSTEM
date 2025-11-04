@@ -5,16 +5,20 @@
       "revenue": 435.0
     },
     "2206-A": {
-      "qty_sold": 2,
-      "revenue": 340.0
+      "qty_sold": 12,
+      "revenue": 3740.0
     },
     "ST-PT-25-CM-09": {
       "qty_sold": 1,
       "revenue": 335.0
+    },
+    "727": {
+      "qty_sold": 4,
+      "revenue": 600.0
     }
   },
-  "cash_total": 1110.0,
+  "cash_total": 5110.0,
   "gcash_total": 0.0,
   "period_start": "2025-11-04T10:32:10",
-  "last_saved": "2025-11-04T12:38:10"
+  "last_saved": "2025-11-04T18:00:18"
 }

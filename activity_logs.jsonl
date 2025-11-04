@@ -43,3 +43,42 @@
 {"timestamp": "2025-11-04 12:35:47", "user": "cashier", "action": "Previewed inventory sync", "details": "98 items compared; 22 not in local catalog"}
 {"timestamp": "2025-11-04 12:37:03", "user": "cashier", "action": "Previewed inventory sync", "details": "98 items compared; 22 not in local catalog"}
 {"timestamp": "2025-11-04 12:38:06", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 13:51:31", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 13:53:32", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 13:58:42", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 13:59:01", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 13:59:39", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 13:59:55", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 13:59:56", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 14:00:17", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-04 14:00:28", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 14:47:25", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:47:29", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-04 14:47:32", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x2 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:55:17", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:56:01", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:56:05", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-04 14:56:07", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x2 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:56:14", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:56:18", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-04 14:56:19", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x2 (SKU 2206-A)"}
+{"timestamp": "2025-11-04 14:56:46", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-04 14:56:49", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-04 14:56:50", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-04 14:56:50", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-04 14:56:52", "user": "cashier", "action": "Completed checkout", "details": "Total P3,400.00, Paid P3,400.00, Change P0.00, Tender: Cash P3,400.00. Items: Laundry Basket x1; Laundry Basket x2; Laundry Basket x1; Laundry Basket x1; Laundry Basket x2; Laundry Basket x1; Laundry Basket x2; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-04 14:56:57", "user": "cashier", "action": "Added item to cart", "details": "3L EZI Food Keeper x2 (SKU 727)"}
+{"timestamp": "2025-11-04 14:57:04", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-04 14:57:09", "user": "cashier", "action": "Added item to cart", "details": "3L EZI Food Keeper x2 (SKU 727)"}
+{"timestamp": "2025-11-04 14:57:34", "user": "cashier", "action": "Cleared sales summary", "details": "Reference OS0027 | Transactions tagged: 5 | Items tagged: 16"}
+{"timestamp": "2025-11-04 14:57:39", "user": "cashier", "action": "Posted sales invoice", "details": "Reference OS0027 | Items sent: 3"}
+{"timestamp": "2025-11-04 14:58:03", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 14:58:04", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-04 14:58:06", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-04 14:58:06", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-04 14:58:07", "user": "cashier", "action": "Completed checkout", "details": "Total P600.00, Paid P600.00, Change P0.00, Tender: Cash P600.00. Items: 3L EZI Food Keeper x2; 3L EZI Food Keeper x2; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-04 14:59:04", "user": "cashier", "action": "Cleared sales summary", "details": "Reference OS0028 | Transactions tagged: 1 | Items tagged: 3"}
+{"timestamp": "2025-11-04 17:43:11", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 17:58:11", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-04 18:00:09", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-04 18:00:17", "user": "cashier", "action": "Viewed sales summary"}

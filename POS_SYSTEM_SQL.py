@@ -70,6 +70,7 @@ current_theme_preference = "system"
 current_theme_effective = "light"
 basket_promos = []  # Stores basket-size promo tiers
 BUNDLE_IMAGE_COLUMN_AVAILABLE = None  # Tracks bundles.image_filename availability
+SALES_REFERENCE_COLUMNS_READY = None  # Tracks presence of ref_no columns on sales tables
 users_data = {}  # Stores usernames and hashed passwords: {username: {"password_hash": "...", "is_admin": bool}}
 current_user_name = None  # Stores the username of the currently logged-in user
 ADMIN_PASSWORD_FILE = "admin_password.txt"
@@ -394,6 +395,96 @@ def ensure_bundle_image_column(conn):
         print(f"Warning: unable to add image_filename column to bundles table: {exc}")
         BUNDLE_IMAGE_COLUMN_AVAILABLE = False
         return False
+
+
+def ensure_sales_reference_columns(conn):
+    """
+    Ensures the sales_transactions and sales_items tables include a ref_no column.
+    """
+    global SALES_REFERENCE_COLUMNS_READY
+    if SALES_REFERENCE_COLUMNS_READY is True:
+        return True
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW COLUMNS FROM sales_transactions LIKE 'ref_no'")
+            has_transactions_ref = cursor.fetchone() is not None
+            cursor.execute("SHOW COLUMNS FROM sales_items LIKE 'ref_no'")
+            has_items_ref = cursor.fetchone() is not None
+        if has_transactions_ref and has_items_ref:
+            SALES_REFERENCE_COLUMNS_READY = True
+            return True
+        with conn.cursor() as cursor:
+            if not has_transactions_ref:
+                cursor.execute("ALTER TABLE sales_transactions ADD COLUMN ref_no VARCHAR(64) NULL")
+            if not has_items_ref:
+                cursor.execute("ALTER TABLE sales_items ADD COLUMN ref_no VARCHAR(64) NULL")
+        conn.commit()
+        SALES_REFERENCE_COLUMNS_READY = True
+        return True
+    except Error as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"Warning: unable to ensure sales reference columns exist: {exc}")
+        SALES_REFERENCE_COLUMNS_READY = None
+        return False
+
+
+def assign_reference_to_sales(ref_no, parent=None):
+    """
+    Tags unassigned sales records with the provided reference number.
+    Returns (success, (transactions_updated, items_updated)).
+    """
+    ref_no = (ref_no or "").strip()
+    if not ref_no:
+        show_error("Missing Reference", "A reference number is required to tag sales records.", parent)
+        return False, (0, 0)
+    conn = get_db_connection(parent)
+    if not conn:
+        return False, (0, 0)
+    try:
+        if not ensure_sales_reference_columns(conn):
+            return False, (0, 0)
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE sales_transactions
+                   SET ref_no = %s
+                 WHERE ref_no IS NULL OR ref_no = ''
+                """,
+                (ref_no,),
+            )
+            updated_transactions = cursor.rowcount or 0
+            cursor.execute(
+                """
+                UPDATE sales_items si
+                JOIN sales_transactions st ON si.transaction_id = st.transaction_id
+                   SET si.ref_no = %s
+                 WHERE st.ref_no = %s
+                   AND (si.ref_no IS NULL OR si.ref_no = '')
+                """,
+                (ref_no, ref_no),
+            )
+            updated_items = cursor.rowcount or 0
+        conn.commit()
+        return True, (updated_transactions, updated_items)
+    except Error as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        show_error(
+            "Database Error",
+            f"Failed to tag sales records with reference '{ref_no}':\n{exc}",
+            parent,
+        )
+        return False, (0, 0)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 def get_receipt_font_name():
     """
     Returns the registered font name to use for receipts.
@@ -2081,17 +2172,19 @@ def load_sales_summary():
     conn = get_db_connection()
     if not conn:
         return False
+    supports_ref_column = ensure_sales_reference_columns(conn)
     try:
         with conn.cursor(dictionary=True) as cursor:
-            cursor.execute(
-                """
-                SELECT p.stock_no, SUM(si.quantity) AS qty_sold, SUM(si.total_price) AS revenue
-                  FROM sales_items si
-                  JOIN products p ON si.product_id = p.product_id
-                 WHERE si.is_freebie = FALSE
-              GROUP BY p.stock_no
-                """
-            )
+            query = [
+                "SELECT p.stock_no, SUM(si.quantity) AS qty_sold, SUM(si.total_price) AS revenue",
+                "  FROM sales_items si",
+                "  JOIN products p ON si.product_id = p.product_id",
+                " WHERE si.is_freebie = FALSE",
+            ]
+            if supports_ref_column:
+                query.append("   AND (si.ref_no IS NULL OR si.ref_no = '')")
+            query.append("GROUP BY p.stock_no")
+            cursor.execute("\n".join(query))
             rows = cursor.fetchall()
             for row in rows:
                 sales_summary[row["stock_no"]] = {
@@ -2578,10 +2671,7 @@ class InventoryManagementDialog(QDialog):
         button_grid.addWidget(btn_export, 0, 2)
         btn_sync_api = QPushButton("Sync via API", self)
         btn_sync_api.clicked.connect(self.sync_inventory_from_api)
-        button_grid.addWidget(btn_sync_api, 1, 0)
-        btn_post_sales = QPushButton("Post Sales Invoice", self)
-        btn_post_sales.clicked.connect(self.post_sales_invoice)
-        button_grid.addWidget(btn_post_sales, 1, 1, 1, 2)
+        button_grid.addWidget(btn_sync_api, 1, 0, 1, 3)
         card_layout.addLayout(button_grid)
         layout.addWidget(card)
         return tab
@@ -3198,111 +3288,6 @@ class InventoryManagementDialog(QDialog):
                 "Inventory sync loaded stub data. Disable 'use_inventory_stub' in api_settings.json to call the live API.",
                 self,
             )
-    def post_sales_invoice(self):
-        global sales_summary, total_cash_tendered, total_gcash_tendered
-        if not ensure_api_settings_loaded(self):
-            return
-        if not sales_summary:
-            show_info("Sales Invoice", "No sales data available to post.", self)
-            return
-        items = []
-        for sku, data in sales_summary.items():
-            qty = int(data.get("qty_sold") or 0)
-            if qty <= 0:
-                continue
-            revenue = float(data.get("revenue") or 0.0)
-            unit_price = revenue / qty if qty and api_settings.get("include_unit_price") else None
-            variant_name = sku
-            variants = self.products.get(sku)
-            if variants:
-                variant_name = variants[0].get("name", sku)
-            item_entry = {
-                "sku": sku,
-                "quantity": qty,
-                "unitPrice": round(unit_price, 2) if unit_price is not None else None,
-                "remarks": variant_name,
-            }
-            items.append(item_entry)
-        if not items:
-            show_info("Sales Invoice", "No qualifying sales items found to post.", self)
-            return
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        prefix = api_settings.get("order_reference_prefix") or "POS"
-        order_reference = f"{prefix}-{today_str}"
-        notes_value = api_settings.get("default_notes")
-        payload = {
-            "customerId": api_settings["customer_id"],
-            "reference": api_settings.get("default_reference"),
-            "transactionDate": today_str,
-            "warehouseId": api_settings["warehouse_id"],
-            "orderReference": order_reference,
-            "notes": notes_value if notes_value is not None else "",
-            "items": items,
-        }
-        using_stub = api_settings.get("use_sales_stub")
-        body = None
-        if using_stub:
-            body = load_sales_invoice_stub_response(parent=self)
-            if body is None:
-                show_error("Sales Invoice Error", "Sales stub response could not be loaded.", self)
-                return
-        else:
-            response = api_request("POST", "sales-invoices", parent=self, json_payload=payload)
-            if response is None:
-                return
-            if response.status_code not in (200, 201):
-                try:
-                    error_body = response.json()
-                except ValueError:
-                    error_body = response.text
-                show_error("Sales Invoice Error", f"API returned {response.status_code}:\n{error_body}", self)
-                return
-            try:
-                body = response.json()
-            except ValueError:
-                body = {}
-            if not isinstance(body, dict):
-                body = {}
-            if body.get("code") not in (200, 201):
-                message = body.get("message") or body.get("error") or response.text
-                show_error("Sales Invoice Error", f"API responded with code {body.get('code')}:\n{message}", self)
-                return
-        if not isinstance(body, dict):
-            body = {}
-        data = body.get("data") or {}
-        if isinstance(data, dict):
-            order_number = payload.get("orderReference")
-            txn_date = payload.get("transactionDate")
-            warehouse_id = payload.get("warehouseId")
-            if order_number and not data.get("order_no"):
-                data["order_no"] = order_number
-            if txn_date and not data.get("txn_date"):
-                data["txn_date"] = txn_date
-            if warehouse_id and not data.get("warehouse_id"):
-                data["warehouse_id"] = str(warehouse_id)
-        ref_no = data.get("ref_no") or data.get("id")
-        amount_due = data.get("amount_due")
-        message_lines = ["Sales invoice created successfully."]
-        if ref_no:
-            message_lines.append(f"Reference: {ref_no}")
-        if amount_due is not None:
-            message_lines.append(f"Amount Due: {amount_due}")
-        show_info("Sales Invoice Posted", "\n".join(message_lines), self)
-        if using_stub:
-            show_info(
-                "Stub Data Used",
-                "Sales invoice request used stub response. Disable 'use_sales_stub' in api_settings.json to call the live API.",
-                self,
-            )
-        if api_settings.get("clear_sales_summary_after_post"):
-            sales_summary.clear()
-            total_cash_tendered = 0.0
-            total_gcash_tendered = 0.0
-            save_sales_summary()
-            save_tendered_amounts()
-            parent = self.parent()
-            if parent and hasattr(parent, "sales_summary"):
-                parent.sales_summary = sales_summary
     def export_summary(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Summary as Excel", "", "Excel Files (*.xlsx *.xls)")
         if file_path:
@@ -5843,6 +5828,152 @@ class POSMainWindow(QMainWindow):
         save_inventory_summary()
         save_products_to_database(self)
         self.log_user_action("Accessed inventory management")
+    def clear_sales_summary_with_reference(self, ref_no, parent_widget=None, show_feedback=True):
+        """
+        Tags unposted sales with ref_no, clears local summary totals, and persists the reset.
+        Returns a dictionary with counts on success, or None on failure.
+        """
+        global sales_summary, total_cash_tendered, total_gcash_tendered
+        widget = parent_widget or self
+        ref_no = (ref_no or "").strip()
+        if not ref_no:
+            show_error("Missing Reference", "A valid SI / reference number is required.", widget)
+            return None
+        success, counts = assign_reference_to_sales(ref_no, widget)
+        if not success:
+            return None
+        transactions_tagged, items_tagged = counts
+        sales_summary.clear()
+        total_cash_tendered = 0.0
+        total_gcash_tendered = 0.0
+        save_sales_summary()
+        save_tendered_amounts()
+        self.sales_summary = sales_summary
+        self.log_user_action(
+            "Cleared sales summary",
+            f"Reference {ref_no} | Transactions tagged: {transactions_tagged} | Items tagged: {items_tagged}",
+        )
+        if show_feedback:
+            message_lines = [
+                "Sales summary cleared.",
+                f"Tagged {transactions_tagged} transaction(s) and {items_tagged} item(s) with reference '{ref_no}'.",
+            ]
+            show_info("Sales Summary Cleared", "\n".join(message_lines), widget)
+        return {"transactions": transactions_tagged, "items": items_tagged}
+    def post_sales_invoice(self, parent_widget=None):
+        """
+        Posts the current sales summary as an invoice via the configured API and clears the summary on success.
+        """
+        global sales_summary
+        widget = parent_widget or self
+        if not ensure_api_settings_loaded(widget):
+            return False
+        if not sales_summary:
+            show_info("Sales Invoice", "No sales data available to post.", widget)
+            return False
+        items = []
+        include_unit_price = api_settings.get("include_unit_price")
+        for sku, data in sales_summary.items():
+            qty = int(data.get("qty_sold") or 0)
+            if qty <= 0:
+                continue
+            revenue = float(data.get("revenue") or 0.0)
+            unit_price = revenue / qty if qty and include_unit_price else None
+            variant_name = sku
+            variants = self.products.get(sku)
+            if variants:
+                variant_name = variants[0].get("name", sku)
+            items.append(
+                {
+                    "sku": sku,
+                    "quantity": qty,
+                    "unitPrice": round(unit_price, 2) if unit_price is not None else None,
+                    "remarks": variant_name,
+                }
+            )
+        if not items:
+            show_info("Sales Invoice", "No qualifying sales items found to post.", widget)
+            return False
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        prefix = api_settings.get("order_reference_prefix") or "POS"
+        order_reference = f"{prefix}-{today_str}"
+        notes_value = api_settings.get("default_notes")
+        payload = {
+            "customerId": api_settings["customer_id"],
+            "reference": api_settings.get("default_reference"),
+            "transactionDate": today_str,
+            "warehouseId": api_settings["warehouse_id"],
+            "orderReference": order_reference,
+            "notes": notes_value if notes_value is not None else "",
+            "items": items,
+        }
+        using_stub = api_settings.get("use_sales_stub")
+        body = None
+        if using_stub:
+            body = load_sales_invoice_stub_response(parent=widget)
+            if body is None:
+                show_error("Sales Invoice Error", "Sales stub response could not be loaded.", widget)
+                return False
+        else:
+            response = api_request("POST", "sales-invoices", parent=widget, json_payload=payload)
+            if response is None:
+                return False
+            if response.status_code not in (200, 201):
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    error_body = response.text
+                show_error("Sales Invoice Error", f"API returned {response.status_code}:\n{error_body}", widget)
+                return False
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            if body.get("code") not in (200, 201):
+                message = body.get("message") or body.get("error") or response.text
+                show_error("Sales Invoice Error", f"API responded with code {body.get('code')}:\n{message}", widget)
+                return False
+        if not isinstance(body, dict):
+            body = {}
+        data = body.get("data") or {}
+        if isinstance(data, dict):
+            order_number = payload.get("orderReference")
+            txn_date = payload.get("transactionDate")
+            warehouse_id = payload.get("warehouseId")
+            if order_number and not data.get("order_no"):
+                data["order_no"] = order_number
+            if txn_date and not data.get("txn_date"):
+                data["txn_date"] = txn_date
+            if warehouse_id and not data.get("warehouse_id"):
+                data["warehouse_id"] = str(warehouse_id)
+        ref_no = data.get("ref_no") or data.get("id") or payload.get("orderReference")
+        amount_due = data.get("amount_due")
+        summary_stats = self.clear_sales_summary_with_reference(ref_no, parent_widget=widget, show_feedback=False)
+        message_lines = ["Sales invoice created successfully."]
+        if ref_no:
+            message_lines.append(f"Reference: {ref_no}")
+        if amount_due is not None:
+            message_lines.append(f"Amount Due: {amount_due}")
+        if summary_stats:
+            message_lines.append(
+                f"Tagged {summary_stats['transactions']} transaction(s) and {summary_stats['items']} item(s) before clearing the summary."
+            )
+        else:
+            message_lines.append("Sales summary was not cleared automatically. Please clear it manually.")
+        show_info("Sales Invoice Posted", "\n".join(message_lines), widget)
+        if using_stub:
+            show_info(
+                "Stub Data Used",
+                "Sales invoice request used stub response. Disable 'use_sales_stub' in api_settings.json to call the live API.",
+                widget,
+            )
+        self.log_user_action(
+            "Posted sales invoice",
+            f"Reference {ref_no or 'N/A'} | Items sent: {len(items)}",
+        )
+        return True
     def summary_view(self):
         dlg = SalesSummaryDialog(self)
         dlg.exec()
@@ -5934,15 +6065,21 @@ class SalesSummaryDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["STOCK #", "Product Name", "Quantity Sold", "Unit Price", "Total Revenue"])
-        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setHighlightSections(False)
+        header = self.table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setHighlightSections(False)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(48)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
+        self.table.setWordWrap(False)
         self.table.setSortingEnabled(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
@@ -5981,6 +6118,10 @@ class SalesSummaryDialog(QDialog):
             metrics_grid.addWidget(card, idx // 2, idx % 2)
         side_layout.addLayout(metrics_grid)
         side_layout.addStretch()
+        self.post_invoice_button = QPushButton("Post Sales Invoice")
+        self.post_invoice_button.setObjectName("SummaryAction")
+        self.post_invoice_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.post_invoice_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.export_excel_button = QPushButton("Export to Excel")
         self.export_excel_button.setObjectName("SummaryAction")
         self.export_excel_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -5989,16 +6130,63 @@ class SalesSummaryDialog(QDialog):
         self.export_pdf_button.setObjectName("SummaryAction")
         self.export_pdf_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_pdf_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.clear_summary_button = QPushButton("Clear Summary")
+        self.clear_summary_button.setObjectName("SummaryAction")
+        self.clear_summary_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_summary_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        side_layout.addWidget(self.post_invoice_button)
         side_layout.addWidget(self.export_excel_button)
         side_layout.addWidget(self.export_pdf_button)
+        side_layout.addWidget(self.clear_summary_button)
         content_row.addWidget(side_panel, 1)
         main_layout.addWidget(content_card)
+        self.post_invoice_button.clicked.connect(self.trigger_post_sales_invoice)
         self.export_excel_button.clicked.connect(self.export_to_excel)
         self.export_pdf_button.clicked.connect(self.export_to_pdf)
+        self.clear_summary_button.clicked.connect(self.prompt_clear_summary)
         self.refresh_scope_selector()
         self.populate_sales_summary()
         self.update_metrics()
         self.apply_theme_styles()
+    def trigger_post_sales_invoice(self):
+        parent = self.parent()
+        if not parent or not hasattr(parent, "post_sales_invoice"):
+            show_error("Unavailable", "Posting sales invoices is not available right now.", self)
+            return
+        result = parent.post_sales_invoice(parent_widget=self)
+        if result:
+            self.refresh_scope_selector()
+            self.populate_sales_summary()
+            self.update_metrics()
+    def prompt_clear_summary(self):
+        parent = self.parent()
+        if not parent or not hasattr(parent, "clear_sales_summary_with_reference"):
+            show_error("Unavailable", "Clearing the sales summary is not available right now.", self)
+            return
+        ref_no, ok = QInputDialog.getText(
+            self,
+            "Clear Sales Summary",
+            "Enter the SI / Reference Number to tag these transactions:",
+        )
+        if not ok:
+            return
+        ref_no = (ref_no or "").strip()
+        if not ref_no:
+            show_error("Missing Reference", "A valid SI / reference number is required.", self)
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Clear",
+            f"Tag all unposted sales with reference '{ref_no}' and clear the summary?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        if parent.clear_sales_summary_with_reference(ref_no, parent_widget=self):
+            self.refresh_scope_selector()
+            self.populate_sales_summary()
+            self.update_metrics()
     def _create_metric_card(self, key, title):
         card = QFrame()
         card.setObjectName("MetricCard")
@@ -6296,19 +6484,10 @@ class SalesSummaryDialog(QDialog):
             QMessageBox.StandardButton.No,
         )
         if result == QMessageBox.StandardButton.Yes:
-            self.reset_scope(scope)
-            db_prompt = QMessageBox.question(
-                self,
-                "Clear Database Sales Records?",
-                "Do you also want to clear recorded sales rows from the database tables?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if db_prompt == QMessageBox.StandardButton.Yes:
-                if purge_sales_tables(self):
-                    if parent and hasattr(parent, "log_user_action"):
-                        parent.log_user_action("Cleared sales tables", f"Scope reset: {scope.upper()}")
-                    show_info("Sales Records Cleared", "sales_transactions and sales_items tables have been cleared.", self)
+            if scope == "vault":
+                self.reset_scope(scope)
+            else:
+                self.prompt_clear_summary()
         else:
             # Refresh views so any new data is reflected.
             self.populate_sales_summary()
@@ -6322,16 +6501,12 @@ class SalesSummaryDialog(QDialog):
             if parent and hasattr(parent, "log_user_action") and not quiet:
                 parent.log_user_action("Reset sales vault", f"New period started {self._format_period_start()}")
         else:
-            global sales_summary, total_cash_tendered, total_gcash_tendered
-            sales_summary.clear()
-            total_cash_tendered = 0.0
-            total_gcash_tendered = 0.0
-            save_sales_summary()
-            save_tendered_amounts()
-            if parent and hasattr(parent, "sales_summary"):
-                parent.sales_summary = sales_summary
-            if parent and hasattr(parent, "log_user_action") and not quiet:
-                parent.log_user_action("Reset sales summary", "Cleared current session totals")
+            if not quiet:
+                show_info(
+                    "Use Clear Summary",
+                    "Use the Clear Summary button to tag an SI/reference number before clearing the session totals.",
+                    self,
+                )
         self.refresh_scope_selector()
         self.populate_sales_summary()
         self.update_metrics()
