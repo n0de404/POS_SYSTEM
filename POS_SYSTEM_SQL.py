@@ -48,7 +48,7 @@ from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, Q
                              QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
                              QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton, QAbstractItemView)
-from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush
+from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush, QConicalGradient
 from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, pyqtSignal, QTimer
 # --- Global Variables ---
 products = {}  # Stores product data from the database: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
@@ -174,13 +174,32 @@ def ensure_inventory_stub_file(file_path, parent=None):
     show_warning("Inventory Stub", f"Inventory stub file '{candidate}' was not found.", parent)
     return False
 # --- Database configuration ---
-DB_CONFIG = {
-    "host": "192.168.1.146",
-    "user": "user",
-    "password": "0t1docmtl$tm",
-    "database": "pos_db",
-    "use_pure": True,
-}
+DB_CONFIG_FILE = os.path.join(BASE_DIR, "db_config.json")
+
+
+def load_db_config():
+    """Load database connection settings from the JSON configuration file."""
+    try:
+        with open(DB_CONFIG_FILE, "r", encoding="utf-8") as config_file:
+            config = json.load(config_file)
+    except FileNotFoundError:
+        print(f"Database configuration file not found: {DB_CONFIG_FILE}")
+        return {}
+    except json.JSONDecodeError as exc:
+        print(f"Invalid JSON in database configuration file: {exc}")
+        return {}
+    except Exception as exc:
+        print(f"Unexpected error reading database configuration: {exc}")
+        return {}
+
+    if not isinstance(config, dict):
+        print("Database configuration must be a JSON object.")
+        return {}
+
+    return config
+
+
+DB_CONFIG = load_db_config()
 # --- Promo pricing support tracking ---
 PROMO_PRICE_COLUMN_AVAILABLE = None
 PROMO_PRICE_WARNING_SHOWN = False
@@ -592,22 +611,32 @@ def _draw_bold_text(canvas_obj, x_pos, y_pos, text, font_name, font_size, offset
 def load_ui_preferences():
     """Loads UI preferences such as theme selection from disk."""
     global current_theme_preference
+    theme = "system"
     try:
         with open(UI_PREFERENCES_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            theme = data.get("theme", "system")
-            current_theme_preference = theme
-            return theme
+            requested = data.get("theme", "system")
+            if requested not in {"system", "light", "dark"}:
+                requested = "system"
+            if requested != "system":
+                # Always reset persisted preference to system so future launches follow the OS theme.
+                save_ui_preferences("system")
+                requested = "system"
+            theme = requested
     except FileNotFoundError:
-        return "system"
+        pass
     except Exception as exc:
         print(f"Warning: failed to load UI preferences: {exc}")
-        return "system"
+    current_theme_preference = theme
+    return theme
 def save_ui_preferences(theme):
-    """Persists UI preferences such as theme selection to disk."""
+    """Persists UI preferences such as theme selection to disk.
+
+    Persisted value is always 'system' so the app follows the OS theme on launch.
+    """
     try:
         with open(UI_PREFERENCES_FILE, 'w', encoding='utf-8') as f:
-            json.dump({"theme": theme}, f, ensure_ascii=False, indent=4)
+            json.dump({"theme": "system"}, f, ensure_ascii=False, indent=4)
     except Exception as exc:
         print(f"Warning: failed to save UI preferences: {exc}")
 def detect_system_theme():
@@ -2655,8 +2684,17 @@ class InventoryManagementDialog(QDialog):
         card_layout.setSpacing(16)
         self.inventory_table = QTableWidget(0, 3, card)
         self.inventory_table.setHorizontalHeaderLabels(["Stock No.", "Product Name", "Stock Left"])
-        self.inventory_table.horizontalHeader().setStretchLastSection(True)
+        inventory_header = self.inventory_table.horizontalHeader()
+        inventory_header.setStretchLastSection(False)
+        inventory_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        inventory_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        inventory_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        inventory_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.inventory_table.setAlternatingRowColors(True)
+        self.inventory_table.setWordWrap(False)
+        self.inventory_table.setSortingEnabled(True)
+        self.inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         card_layout.addWidget(self.inventory_table)
         button_grid = QGridLayout()
         button_grid.setSpacing(12)
@@ -2689,8 +2727,19 @@ class InventoryManagementDialog(QDialog):
         card_layout.addWidget(header)
         self.bundle_table = QTableWidget(0, 5, card)
         self.bundle_table.setHorizontalHeaderLabels(["Code", "Name", "Price", "Components", "SKU"])
-        self.bundle_table.horizontalHeader().setStretchLastSection(True)
+        bundle_header = self.bundle_table.horizontalHeader()
+        bundle_header.setStretchLastSection(False)
+        bundle_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        bundle_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        bundle_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        bundle_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        bundle_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        bundle_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.bundle_table.setAlternatingRowColors(True)
+        self.bundle_table.setWordWrap(False)
+        self.bundle_table.setSortingEnabled(True)
+        self.bundle_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.bundle_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         card_layout.addWidget(self.bundle_table)
         control_row = QHBoxLayout()
         control_row.addStretch()
@@ -2721,8 +2770,17 @@ class InventoryManagementDialog(QDialog):
         card_layout.addWidget(header)
         self.promos_table = QTableWidget(0, 3, card)
         self.promos_table.setHorizontalHeaderLabels(["Promo Code", "Units per Sale", "Linked Items"])
-        self.promos_table.horizontalHeader().setStretchLastSection(True)
+        promos_header = self.promos_table.horizontalHeader()
+        promos_header.setStretchLastSection(False)
+        promos_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        promos_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        promos_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        promos_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.promos_table.setAlternatingRowColors(True)
+        self.promos_table.setWordWrap(False)
+        self.promos_table.setSortingEnabled(True)
+        self.promos_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.promos_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         card_layout.addWidget(self.promos_table)
         control_row = QHBoxLayout()
         control_row.addStretch()
@@ -2753,8 +2811,18 @@ class InventoryManagementDialog(QDialog):
         card_layout.addWidget(header)
         self.basket_table = QTableWidget(0, 4, card)
         self.basket_table.setHorizontalHeaderLabels(["Code", "Name", "Threshold", "Freebies"])
-        self.basket_table.horizontalHeader().setStretchLastSection(True)
+        basket_header = self.basket_table.horizontalHeader()
+        basket_header.setStretchLastSection(False)
+        basket_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        basket_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        basket_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        basket_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        basket_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.basket_table.setAlternatingRowColors(True)
+        self.basket_table.setWordWrap(False)
+        self.basket_table.setSortingEnabled(True)
+        self.basket_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.basket_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         card_layout.addWidget(self.basket_table)
         control_row = QHBoxLayout()
         control_row.addStretch()
@@ -2830,6 +2898,7 @@ class InventoryManagementDialog(QDialog):
     def populate_table(self):
         if not hasattr(self, "inventory_table"):
             return
+        self.inventory_table.setSortingEnabled(False)
         self.inventory_table.setRowCount(0)  # Clear existing rows
         # Sort products by name
         sorted_products = sorted(self.products.items(), key=lambda item: item[1][0]["name"].lower())
@@ -2840,11 +2909,14 @@ class InventoryManagementDialog(QDialog):
                 self.inventory_table.setItem(row, 0, QTableWidgetItem(barcode))
                 self.inventory_table.setItem(row, 1, QTableWidgetItem(variant["name"]))
                 self.inventory_table.setItem(row, 2, QTableWidgetItem(str(variant["stock"])))
+        self.inventory_table.setSortingEnabled(True)
+        QTimer.singleShot(0, self._autosize_inventory_columns)
     def populate_bundle_table(self):
         if not hasattr(self, "bundle_table"):
             return
         if not load_bundle_promos(self):
             return
+        self.bundle_table.setSortingEnabled(False)
         self.bundle_table.setRowCount(0)
         for code in sorted(bundle_promos.keys()):
             bundle = bundle_promos[code]
@@ -2859,6 +2931,8 @@ class InventoryManagementDialog(QDialog):
             comp_summary = ", ".join(f"{comp.get('quantity', 1)}x {comp.get('barcode', '-')}" for comp in components) or "-"
             self.bundle_table.setItem(row, 3, QTableWidgetItem(comp_summary))
             self.bundle_table.setItem(row, 4, QTableWidgetItem(bundle.get("sku", "")))
+        self.bundle_table.setSortingEnabled(True)
+        QTimer.singleShot(0, self._autosize_bundle_columns)
     def show_remove_bundle_dialog(self):
         if not bundle_promos:
             show_info("No Bundles", "There are currently no bundles to remove.", self)
@@ -2912,6 +2986,7 @@ class InventoryManagementDialog(QDialog):
             return
         if not load_promo_inventory(self):
             return
+        self.promos_table.setSortingEnabled(False)
         self.promos_table.setRowCount(0)
         for code in sorted(promo_inventory_map.keys()):
             units = promo_inventory_map.get(code, 1)
@@ -2926,6 +3001,8 @@ class InventoryManagementDialog(QDialog):
             self.promos_table.setItem(row, 0, QTableWidgetItem(code))
             self.promos_table.setItem(row, 1, QTableWidgetItem(str(units)))
             self.promos_table.setItem(row, 2, QTableWidgetItem(str(linked)))
+        self.promos_table.setSortingEnabled(True)
+        QTimer.singleShot(0, self._autosize_promos_columns)
     def show_remove_promo_dialog(self):
         if not promo_inventory_map:
             show_info("No Promos", "There are currently no promos to remove.", self)
@@ -2990,6 +3067,7 @@ class InventoryManagementDialog(QDialog):
             return
         if not load_basket_promos(self):
             return
+        self.basket_table.setSortingEnabled(False)
         self.basket_table.setRowCount(0)
         for entry in basket_promos:
             row = self.basket_table.rowCount()
@@ -3004,6 +3082,86 @@ class InventoryManagementDialog(QDialog):
                 f"{freebie.get('quantity', 1)}x {freebie.get('barcode', '')}" for freebie in freebies
             ) or "-"
             self.basket_table.setItem(row, 3, QTableWidgetItem(freebies_summary))
+        self.basket_table.setSortingEnabled(True)
+        QTimer.singleShot(0, self._autosize_basket_columns)
+    def _autosize_inventory_columns(self):
+        table = getattr(self, "inventory_table", None)
+        if not table:
+            return
+        table.resizeColumnToContents(0)
+        table.resizeColumnToContents(2)
+        widened = table.columnWidth(0) + 36
+        table.setColumnWidth(0, widened)
+        viewport_width = table.viewport().width()
+        if viewport_width <= 0:
+            return
+        padding = 36
+        fixed = table.columnWidth(0) + table.columnWidth(2) + padding
+        available = max(220, viewport_width - fixed)
+        hint = table.sizeHintForColumn(1) + 24
+        target = max(220, min(hint, available))
+        table.setColumnWidth(1, target)
+    def _autosize_bundle_columns(self):
+        table = getattr(self, "bundle_table", None)
+        if not table:
+            return
+        for index in (0, 2, 4):
+            table.resizeColumnToContents(index)
+        table.setColumnWidth(0, table.columnWidth(0) + 18)
+        viewport_width = table.viewport().width()
+        if viewport_width <= 0:
+            return
+        padding = 48
+        fixed = sum(table.columnWidth(i) for i in (0, 2, 4)) + padding
+        name_hint = table.sizeHintForColumn(1) + 24
+        comp_hint = table.sizeHintForColumn(3) + 24
+        remaining = viewport_width - fixed
+        if remaining <= 0:
+            remaining = name_hint + comp_hint
+        total_hint = max(1, name_hint + comp_hint)
+        scale = min(1.0, remaining / total_hint)
+        name_width = max(220, int(name_hint * scale))
+        comp_width = max(220, int(comp_hint * scale))
+        table.setColumnWidth(1, name_width)
+        table.setColumnWidth(3, comp_width)
+    def _autosize_promos_columns(self):
+        table = getattr(self, "promos_table", None)
+        if not table:
+            return
+        for index in (0, 1):
+            table.resizeColumnToContents(index)
+        table.setColumnWidth(0, table.columnWidth(0) + 18)
+        viewport_width = table.viewport().width()
+        if viewport_width <= 0:
+            return
+        padding = 32
+        fixed = table.columnWidth(0) + table.columnWidth(1) + padding
+        available = max(220, viewport_width - fixed)
+        hint = table.sizeHintForColumn(2) + 24
+        table.setColumnWidth(2, max(220, min(hint, available)))
+    def _autosize_basket_columns(self):
+        table = getattr(self, "basket_table", None)
+        if not table:
+            return
+        for index in (0, 2):
+            table.resizeColumnToContents(index)
+        table.setColumnWidth(0, table.columnWidth(0) + 18)
+        viewport_width = table.viewport().width()
+        if viewport_width <= 0:
+            return
+        padding = 48
+        fixed = table.columnWidth(0) + table.columnWidth(2) + padding
+        name_hint = table.sizeHintForColumn(1) + 24
+        freebies_hint = table.sizeHintForColumn(3) + 24
+        remaining = viewport_width - fixed
+        if remaining <= 0:
+            remaining = name_hint + freebies_hint
+        total_hint = max(1, name_hint + freebies_hint)
+        scale = min(1.0, remaining / total_hint)
+        name_width = max(200, int(name_hint * scale))
+        freebies_width = max(220, int(freebies_hint * scale))
+        table.setColumnWidth(1, name_width)
+        table.setColumnWidth(3, freebies_width)
     def show_remove_basket_dialog(self):
         if not basket_promos:
             show_info("No Basket Rewards", "There are currently no basket rewards to remove.", self)
@@ -4410,6 +4568,9 @@ class POSMainWindow(QMainWindow):
         view_archive_action = QAction("View Archived Receipts", self)
         view_archive_action.triggered.connect(self.show_archive_labels)
         archive_menu.addAction(view_archive_action)
+        sales_archive_action = QAction("Sales Summary Archive", self)
+        sales_archive_action.triggered.connect(self.show_sales_summary_archive)
+        archive_menu.addAction(sales_archive_action)
         logs_menu = menubar.addMenu("Logs / History")
         view_logs_action = QAction("View Activity Logs", self)
         view_logs_action.triggered.connect(self.show_activity_logs)
@@ -6029,6 +6190,9 @@ class POSMainWindow(QMainWindow):
         if logs:
             table.scrollToBottom()
         dialog.exec()
+    def show_sales_summary_archive(self):
+        dlg = SalesSummaryArchiveDialog(self)
+        dlg.exec()
     def show_archive_labels(self):
         dlg = ArchiveDialog(self)
         dlg.exec()
@@ -6036,7 +6200,7 @@ class SalesSummaryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Sales Summary")
-        self.resize(1024, 620)
+        self.resize(1400, 680)
         self.metric_labels = {}
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(28, 24, 28, 24)
@@ -6069,11 +6233,7 @@ class SalesSummaryDialog(QDialog):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         header.setHighlightSections(False)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(48)
@@ -6083,6 +6243,7 @@ class SalesSummaryDialog(QDialog):
         self.table.setSortingEnabled(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
+        QTimer.singleShot(0, self._set_summary_column_widths)
         table_layout.addWidget(self.table)
         content_row.addWidget(table_container, 3)
         side_panel = QFrame()
@@ -6090,17 +6251,6 @@ class SalesSummaryDialog(QDialog):
         side_layout = QVBoxLayout(side_panel)
         side_layout.setContentsMargins(12, 8, 12, 8)
         side_layout.setSpacing(16)
-        scope_label = QLabel("View Totals For")
-        scope_label.setObjectName("MetricTitle")
-        self.scope_selector = QComboBox()
-        self.scope_selector.setObjectName("MetricScopeSelector")
-        self.scope_selector.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.scope_selector.currentIndexChanged.connect(self.on_scope_changed)
-        side_layout.addWidget(scope_label)
-        side_layout.addWidget(self.scope_selector)
-        self.vault_period_label = QLabel("")
-        self.vault_period_label.setObjectName("MetricSubtitle")
-        side_layout.addWidget(self.vault_period_label)
         metrics_grid = QGridLayout()
         metrics_grid.setHorizontalSpacing(12)
         metrics_grid.setVerticalSpacing(12)
@@ -6144,7 +6294,6 @@ class SalesSummaryDialog(QDialog):
         self.export_excel_button.clicked.connect(self.export_to_excel)
         self.export_pdf_button.clicked.connect(self.export_to_pdf)
         self.clear_summary_button.clicked.connect(self.prompt_clear_summary)
-        self.refresh_scope_selector()
         self.populate_sales_summary()
         self.update_metrics()
         self.apply_theme_styles()
@@ -6155,7 +6304,6 @@ class SalesSummaryDialog(QDialog):
             return
         result = parent.post_sales_invoice(parent_widget=self)
         if result:
-            self.refresh_scope_selector()
             self.populate_sales_summary()
             self.update_metrics()
     def prompt_clear_summary(self):
@@ -6184,7 +6332,6 @@ class SalesSummaryDialog(QDialog):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         if parent.clear_sales_summary_with_reference(ref_no, parent_widget=self):
-            self.refresh_scope_selector()
             self.populate_sales_summary()
             self.update_metrics()
     def _create_metric_card(self, key, title):
@@ -6229,14 +6376,15 @@ class SalesSummaryDialog(QDialog):
             table_bg = self._mix_color(tokens["card_bg"], "#000000", 0.18)
             side_panel_bg = self._mix_color(tokens["card_bg"], "#000000", 0.28)
             metric_bg = self._mix_color(tokens["card_bg"], "#ffffff", 0.12)
-            metric_border = self._mix_color(metric_bg, "#000000", 0.45)
+            metric_border = self._mix_color(metric_bg, "#ffffff", 0.4)
+            metric_border_style = f"border: 1px solid {metric_border};"
             button_bg = self._mix_color(tokens["card_bg"], "#ffffff", 0.05)
             button_hover = self._mix_color(button_bg, "#ffffff", 0.12)
             button_pressed = self._mix_color(button_bg, "#000000", 0.25)
             button_text = tokens["title"]
             button_border = self._mix_color(button_bg, "#000000", 0.35)
-            table_border = self._mix_color(table_bg, "#000000", 0.35)
-            header_bg = self._mix_color(tokens["card_bg"], "#000000", 0.35)
+            table_border = self._mix_color(tokens["card_bg"], "#ffffff", 0.2)
+            header_bg = self._mix_color(tokens["card_bg"], "#ffffff", 0.18)
             header_text = tokens["title"]
             alt_row = self._mix_color(table_bg, "#ffffff", 0.08)
         else:
@@ -6244,6 +6392,7 @@ class SalesSummaryDialog(QDialog):
             side_panel_bg = self._mix_color(tokens["card_bg"], "#000000", 0.02)
             metric_bg = self._mix_color(tokens["card_bg"], "#ffffff", 0.7)
             metric_border = self._mix_color(metric_bg, "#000000", 0.12)
+            metric_border_style = f"border: 1px solid {metric_border};"
             button_bg = "#f3f4f6"
             button_hover = "#e5e7eb"
             button_pressed = "#d1d5db"
@@ -6284,7 +6433,7 @@ class SalesSummaryDialog(QDialog):
             }}
             QFrame#MetricCard {{
                 background: {metric_bg};
-                border: 1px solid {metric_border};
+                {metric_border_style}
                 border-radius: 10px;
             }}
             QLabel#MetricTitle {{
@@ -6293,26 +6442,10 @@ class SalesSummaryDialog(QDialog):
                 color: {tokens['muted']};
                 letter-spacing: 0.05em;
             }}
-            QLabel#MetricSubtitle {{
-                font-size: 11px;
-                color: {tokens['subtitle']};
-            }}
             QLabel#MetricValue {{
                 font-size: 18px;
                 font-weight: 600;
                 color: {tokens['title']};
-            }}
-            QComboBox#MetricScopeSelector {{
-                padding: 8px 12px;
-                border-radius: 10px;
-                border: 1px solid {button_border};
-                background-color: {tokens['background']};
-                color: {tokens['text']};
-            }}
-            QComboBox#MetricScopeSelector QListView {{
-                background-color: {tokens['card_bg']};
-                color: {tokens['text']};
-                border-radius: 8px;
             }}
             QPushButton#SummaryAction {{
                 background-color: {button_bg};
@@ -6356,56 +6489,13 @@ class SalesSummaryDialog(QDialog):
         palette.setColor(QPalette.ColorRole.Text, QColor(tokens["text"]))
         self.table.setPalette(palette)
         self.table.viewport().setAutoFillBackground(True)
-    def current_scope(self):
-        data = self.scope_selector.currentData()
-        return data if data in {"current", "vault"} else "current"
-    def refresh_scope_selector(self):
-        prior_scope = self.current_scope()
-        self.scope_selector.blockSignals(True)
-        self.scope_selector.clear()
-        self.scope_selector.addItem("Current Session Totals", userData="current")
-        vault_label = f"Vault Period (since {self._format_period_start()})"
-        self.scope_selector.addItem(vault_label, userData="vault")
-        if prior_scope == "vault":
-            self.scope_selector.setCurrentIndex(1)
-        else:
-            self.scope_selector.setCurrentIndex(0)
-        self.scope_selector.blockSignals(False)
-        self.update_vault_info_label()
-    def _format_period_start(self):
-        start = sales_vault_period_start
-        if not start:
-            return "unknown"
-        try:
-            dt = datetime.fromisoformat(start)
-            return dt.strftime("%b %d, %Y %I:%M %p")
-        except ValueError:
-            return start
-    def update_vault_info_label(self):
-        scope = self.current_scope()
-        if scope == "vault":
-            self.vault_period_label.setText("Vault accumulates until you reset the period.")
-        else:
-            self.vault_period_label.setText("Session resets only when you choose to clear it.")
-    def on_scope_changed(self, *_args):
-        self.update_vault_info_label()
-        self.populate_sales_summary()
-        self.update_metrics()
-    def get_scope_dataset(self, scope=None):
-        scope = scope or self.current_scope()
+    def _get_summary_context(self):
         parent = self.parent()
         products_map = getattr(parent, "products", {})
-        if scope == "vault":
-            data = sales_summary_vault
-            cash_total = total_cash_tendered_vault
-            gcash_total = total_gcash_tendered_vault
-        else:
-            data = getattr(parent, "sales_summary", sales_summary)
-            cash_total = total_cash_tendered
-            gcash_total = total_gcash_tendered
-        return products_map, data, cash_total, gcash_total
+        dataset = getattr(parent, "sales_summary", sales_summary) or {}
+        return products_map, dataset, total_cash_tendered, total_gcash_tendered
     def populate_sales_summary(self):
-        products, dataset, *_ = self.get_scope_dataset()
+        products, dataset, *_ = self._get_summary_context()
         all_codes = sorted(set(products.keys()) | set(dataset.keys()))
         self.table.setRowCount(len(all_codes))
         for row, barcode in enumerate(all_codes):
@@ -6421,8 +6511,36 @@ class SalesSummaryDialog(QDialog):
             self.table.setItem(row, 2, QTableWidgetItem(f"{quantity_sold:,}"))
             self.table.setItem(row, 3, QTableWidgetItem(f"P{price_per_item:,.2f}"))
             self.table.setItem(row, 4, QTableWidgetItem(f"P{total_revenue:,.2f}"))
+        QTimer.singleShot(0, self._set_summary_column_widths)
+    def _set_summary_column_widths(self):
+        if not self.table or self.table.columnCount() < 5:
+            return
+        viewport_width = self.table.viewport().width()
+        if viewport_width <= 0:
+            return
+        padding = 28
+        static_columns = {
+            0: 140,
+            2: 120,
+            3: 140,
+            4: 160,
+        }
+        other_total = 0
+        for index, minimum in static_columns.items():
+            hint = self.table.sizeHintForColumn(index)
+            width = max(hint + padding, minimum)
+            self.table.setColumnWidth(index, width)
+            other_total += width
+        remaining = viewport_width - other_total
+        product_hint = self.table.sizeHintForColumn(1) + padding
+        product_min = 220
+        product_width = max(product_min, min(product_hint, max(remaining, product_min)))
+        self.table.setColumnWidth(1, product_width)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._set_summary_column_widths()
     def update_metrics(self):
-        products, dataset, cash_total, gcash_total = self.get_scope_dataset()
+        products, dataset, cash_total, gcash_total = self._get_summary_context()
         total_quantity_sold = sum(data.get('qty_sold', 0) for data in dataset.values())
         total_revenue = sum(data.get('revenue', 0.0) for data in dataset.values())
         best_code = None
@@ -6464,55 +6582,28 @@ class SalesSummaryDialog(QDialog):
                 "Total Revenue": revenue,
             })
         return rows
-    def _post_export_reset_prompt(self, scope, label, file_path):
+    def _post_export_reset_prompt(self, label, file_path):
         parent = self.parent()
         if parent and hasattr(parent, "log_user_action"):
             parent.log_user_action(
                 "Exported sales summary",
-                f"{label} | Scope: {scope.upper()} | File: {file_path}",
+                f"{label} | File: {file_path}",
             )
-        prompt_text = (
-            "Do you want to reset the vault period now?"
-            if scope == "vault"
-            else "Do you want to reset the current session totals now?"
-        )
         result = QMessageBox.question(
             self,
             "Reset Totals?",
-            prompt_text,
+            "Do you want to tag an SI/reference and clear the current session now?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if result == QMessageBox.StandardButton.Yes:
-            if scope == "vault":
-                self.reset_scope(scope)
-            else:
-                self.prompt_clear_summary()
+            self.prompt_clear_summary()
         else:
             # Refresh views so any new data is reflected.
             self.populate_sales_summary()
             self.update_metrics()
-    def reset_scope(self, scope, quiet=False):
-        parent = self.parent()
-        if scope == "vault":
-            reset_sales_vault()
-            ensure_sales_vault_started()
-            save_sales_vault()
-            if parent and hasattr(parent, "log_user_action") and not quiet:
-                parent.log_user_action("Reset sales vault", f"New period started {self._format_period_start()}")
-        else:
-            if not quiet:
-                show_info(
-                    "Use Clear Summary",
-                    "Use the Clear Summary button to tag an SI/reference number before clearing the session totals.",
-                    self,
-                )
-        self.refresh_scope_selector()
-        self.populate_sales_summary()
-        self.update_metrics()
     def export_to_excel(self):
-        scope = self.current_scope()
-        products, dataset, cash_total, gcash_total = self.get_scope_dataset(scope)
+        products, dataset, cash_total, gcash_total = self._get_summary_context()
         rows = self._assemble_sales_rows(products, dataset)
         if not rows:
             QMessageBox.information(self, "No Data", "No sales data to export.")
@@ -6552,12 +6643,11 @@ class SalesSummaryDialog(QDialog):
                 worksheet.write(row_after + 1, 0, "GCash:")
                 worksheet.write(row_after + 1, 1, gcash_total, currency_format)
             QMessageBox.information(self, "Export Successful", f"Sales summary has been exported to:\n{file_path}")
-            self._post_export_reset_prompt(scope, "Excel", file_path)
+            self._post_export_reset_prompt("Excel", file_path)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export sales summary to Excel:\n{e}")
     def export_to_pdf(self):
-        scope = self.current_scope()
-        products, dataset, cash_total, gcash_total = self.get_scope_dataset(scope)
+        products, dataset, cash_total, gcash_total = self._get_summary_context()
         rows = self._assemble_sales_rows(products, dataset)
         if not rows:
             QMessageBox.information(self, "No Data", "No sales data to export.")
@@ -6641,9 +6731,189 @@ class SalesSummaryDialog(QDialog):
                 elements.append(Paragraph("No sales data available", demand_style))
             doc.build(elements)
             QMessageBox.information(self, "Export Successful", f"Sales summary has been exported to:\n{file_path}")
-            self._post_export_reset_prompt(scope, "PDF", file_path)
+            self._post_export_reset_prompt("PDF", file_path)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export sales summary to PDF:\n{e}")
+class SalesSummaryArchiveDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Sales Summary Archive")
+        self.resize(1100, 620)
+        self._filter_text = ""
+        self.filter_timer = QTimer(self)
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.timeout.connect(self.load_transactions)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 20)
+        layout.setSpacing(12)
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(12)
+        filter_label = QLabel("Filter by Reference Number")
+        filter_label.setObjectName("ArchiveFilterLabel")
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("Enter ref_no to search...")
+        self.filter_input.textChanged.connect(self.on_filter_text_changed)
+        filter_row.addWidget(filter_label)
+        filter_row.addWidget(self.filter_input)
+        layout.addLayout(filter_row)
+        self.table = QTableWidget(self)
+        self.table.setColumnCount(9)
+        self.table.setHorizontalHeaderLabels([
+            "Transaction ID",
+            "Sales No.",
+            "Reference No.",
+            "Date / Time",
+            "Cashier",
+            "Payment Method",
+            "Total Amount",
+            "Amount Tendered",
+            "Change",
+        ])
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for index in range(9):
+            header.setSectionResizeMode(index, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.setWordWrap(False)
+        layout.addWidget(self.table)
+        self.apply_archive_styles()
+        self.load_transactions()
+    def apply_archive_styles(self):
+        parent = self.parent()
+        effective = (getattr(parent, "current_effective_theme", None) or current_theme_effective or "light").lower()
+        tokens = get_theme_tokens(effective)
+        alt = self._mix_color(tokens["card_bg"], "#000000", 0.06) if effective == "light" else self._mix_color(tokens["card_bg"], "#ffffff", 0.12)
+        header_bg = self._mix_color(tokens["card_bg"], "#000000", 0.1)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {tokens['background']};
+                color: {tokens['text']};
+            }}
+            QLabel#ArchiveFilterLabel {{
+                font-size: 12px;
+                font-weight: 600;
+                color: {tokens['muted']};
+                letter-spacing: 0.05em;
+            }}
+            QLineEdit {{
+                padding: 8px 12px;
+                border-radius: 8px;
+                border: 1px solid {tokens['card_border']};
+                background: {tokens['card_bg']};
+                color: {tokens['text']};
+            }}
+            QTableWidget {{
+                background-color: {tokens['card_bg']};
+                alternate-background-color: {alt};
+                border: 1px solid {tokens['card_border']};
+                border-radius: 10px;
+            }}
+            QHeaderView::section {{
+                background: {header_bg};
+                font-weight: 600;
+                padding: 8px 10px;
+                border: none;
+                color: {tokens['title']};
+            }}
+        """)
+    def _mix_color(self, base_color, blend_color, amount):
+        return SalesSummaryDialog._mix_color(base_color, blend_color, amount)
+    def on_filter_text_changed(self, text):
+        self._filter_text = (text or "").strip()
+        self.filter_timer.start(250)
+    def load_transactions(self):
+        conn = get_db_connection(self)
+        if not conn:
+            self.table.setRowCount(0)
+            return
+        rows = []
+        try:
+            ensure_sales_reference_columns(conn)
+            with conn.cursor(dictionary=True) as cursor:
+                parts = [
+                    "SELECT",
+                    "  transaction_id,",
+                    "  sales_no,",
+                    "  ref_no,",
+                    "  transaction_time,",
+                    "  cashier_id,",
+                    "  total_amount,",
+                    "  payment_method,",
+                    "  amount_tendered,",
+                    "  change_given",
+                    "FROM sales_transactions",
+                ]
+                params = []
+                if self._filter_text:
+                    parts.append("WHERE ref_no LIKE %s")
+                    params.append(f"%{self._filter_text}%")
+                parts.append("ORDER BY transaction_time DESC")
+                sql = "\n".join(parts)
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                rows = cursor.fetchall()
+        except Error as exc:
+            show_error("Database Error", f"Failed to load sales transactions:\n{exc}", self)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self.populate_table(rows or [])
+    def populate_table(self, rows):
+        self.table.setRowCount(len(rows))
+        for row_index, entry in enumerate(rows):
+            transaction_id = entry.get("transaction_id")
+            sales_no = entry.get("sales_no") or ""
+            ref_no = entry.get("ref_no") or ""
+            transaction_time = entry.get("transaction_time")
+            formatted_time = self._format_datetime(transaction_time)
+            cashier = entry.get("cashier_id") or ""
+            payment_method = entry.get("payment_method") or ""
+            total_amount = self._format_currency(entry.get("total_amount"))
+            tendered = self._format_currency(entry.get("amount_tendered"))
+            change = self._format_currency(entry.get("change_given"))
+            values = [
+                str(transaction_id),
+                str(sales_no),
+                ref_no,
+                formatted_time,
+                cashier,
+                payment_method,
+                total_amount,
+                tendered,
+                change,
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                align = Qt.AlignmentFlag.AlignRight if col >= 6 else Qt.AlignmentFlag.AlignLeft
+                item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(row_index, col, item)
+        self.table.resizeColumnsToContents()
+    def _format_currency(self, value):
+        if value is None:
+            return "-"
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            return "-"
+        return f"P{amount:,.2f}"
+    def _format_datetime(self, value):
+        if not value:
+            return ""
+        if isinstance(value, datetime):
+            return value.strftime("%b %d, %Y %I:%M %p")
+        try:
+            parsed = datetime.fromisoformat(str(value))
+            return parsed.strftime("%b %d, %Y %I:%M %p")
+        except Exception:
+            return str(value)
 class ArchiveDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
