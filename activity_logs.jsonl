@@ -144,3 +144,260 @@
 {"timestamp": "2025-11-06 09:55:43", "user": "cashier", "action": "Viewed sales summary"}
 {"timestamp": "2025-11-06 10:01:44", "user": "cashier", "action": "Viewed sales summary"}
 {"timestamp": "2025-11-06 10:01:47", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:10:20", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:19:18", "user": "cashier", "action": "Simulation started", "details": "3 practice customers"}
+{"timestamp": "2025-11-06 10:19:33", "user": "cashier", "action": "Added item to cart", "details": "Ecobag small x1 (SKU EB-S)"}
+{"timestamp": "2025-11-06 10:19:36", "user": "cashier", "action": "Added item to cart", "details": "Ecobag small x1 (SKU EB-S)"}
+{"timestamp": "2025-11-06 10:19:38", "user": "cashier", "action": "Added item to cart", "details": "Ecobag small x1 (SKU EB-S)"}
+{"timestamp": "2025-11-06 10:19:44", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 10:19:47", "user": "cashier", "action": "Completed checkout", "details": "Total P30.00, Paid P30.00, Change P0.00, Tender: Cash P30.00. Items: Ecobag small x1; Ecobag small x1; Ecobag small x1"}
+{"timestamp": "2025-11-06 10:20:01", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 29.3s (Good), 50.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 10:24:53", "user": "cashier", "action": "Simulation started", "details": "3 practice customers"}
+{"timestamp": "2025-11-06 10:25:08", "user": "cashier", "action": "Added item to cart", "details": "Monobloc Square Stool x1 (SKU 9516-brown)"}
+{"timestamp": "2025-11-06 10:25:18", "user": "cashier", "action": "Added item to cart", "details": "Square Plate (Small) - 4pcs per set x1 (SKU 9616)"}
+{"timestamp": "2025-11-06 10:25:23", "user": "cashier", "action": "Set next item quantity", "details": "4"}
+{"timestamp": "2025-11-06 10:25:29", "user": "cashier", "action": "Added item to cart", "details": "Square Plate (Small) - 4pcs per set x4 (SKU 9616)"}
+{"timestamp": "2025-11-06 10:25:33", "user": "cashier", "action": "Voided cart item", "details": "Square Plate (Small) - 4pcs per set x1"}
+{"timestamp": "2025-11-06 10:25:42", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:25:45", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 10:25:49", "user": "cashier", "action": "Added item to cart", "details": "Christmas set bundle #811, #812,#813 x2 (SKU ST-PT-25-CM-09)"}
+{"timestamp": "2025-11-06 10:25:52", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 10:25:54", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 10:25:54", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 10:25:58", "user": "cashier", "action": "Completed checkout", "details": "Total P1,505.00, Paid P1,505.00, Change P0.00, Tender: Cash P1,505.00. Items: Monobloc Square Stool x1; Square Plate (Small) - 4pcs per set x4; Christmas set bundle #811, #812,#813 x2; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-06 10:26:17", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 65.2s (Needs Improvement), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 10:26:26", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:26:29", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 10:26:35", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x3 (SKU 339-3)"}
+{"timestamp": "2025-11-06 10:26:38", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:26:41", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 10:27:00", "user": "cashier", "action": "Added item to cart", "details": "Chair with Backrest x2 (SKU 9716- Gray)"}
+{"timestamp": "2025-11-06 10:27:06", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 10:27:10", "user": "cashier", "action": "Added item to cart", "details": "22 L Double Quencher Dispenser x2 (SKU 9868-S)"}
+{"timestamp": "2025-11-06 10:27:13", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 10:27:13", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 10:27:13", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 10:27:16", "user": "cashier", "action": "Completed checkout", "details": "Total P3,280.00, Paid P3,280.00, Change P0.00, Tender: Cash P3,280.00. Items: Airtight Canister x3; Chair with Backrest x2; 22 L Double Quencher Dispenser x2; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-06 10:27:24", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 59.0s (Needs Improvement), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 10:27:29", "user": "cashier", "action": "Added item to cart", "details": "2.3 L Urban Gourmet x1 (SKU 852)"}
+{"timestamp": "2025-11-06 10:27:33", "user": "cashier", "action": "Added item to cart", "details": "2.25L Urban Gourmet x1 (SKU 812)"}
+{"timestamp": "2025-11-06 10:27:35", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 10:27:37", "user": "cashier", "action": "Completed checkout", "details": "Total P175.00, Paid P175.00, Change P0.00, Tender: Cash P175.00. Items: 2.3 L Urban Gourmet x1; 2.25L Urban Gourmet x1"}
+{"timestamp": "2025-11-06 10:27:40", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 12.9s (Excellent), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 10:27:49", "user": "cashier", "action": "Simulation completed", "details": "3 customers \u2022 167.0s \u2022 100.0% accuracy"}
+{"timestamp": "2025-11-06 10:46:55", "user": "cashier", "action": "Simulation started", "details": "3 practice customers"}
+{"timestamp": "2025-11-06 10:47:21", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Medium x1 (SKU 2501-2)"}
+{"timestamp": "2025-11-06 10:47:27", "user": "cashier", "action": "Set next item quantity", "details": "6"}
+{"timestamp": "2025-11-06 10:47:30", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Medium x6 (SKU 2501-2)"}
+{"timestamp": "2025-11-06 10:47:43", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 10:47:49", "user": "cashier", "action": "Added item to cart", "details": "Pitcher (with twist lock feature) x3 (SKU 2506)"}
+{"timestamp": "2025-11-06 10:47:58", "user": "cashier", "action": "Added item to cart", "details": "Buffet Tray x1 (SKU 714-S)"}
+{"timestamp": "2025-11-06 10:48:05", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 10:48:12", "user": "cashier", "action": "Added item to cart", "details": "4-seater Table x3 (SKU 870 - GRAY)"}
+{"timestamp": "2025-11-06 10:48:15", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:48:20", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 10:48:26", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x3 (SKU 339-4)"}
+{"timestamp": "2025-11-06 10:48:32", "user": "cashier", "action": "Selected payment method", "details": "Cash And Gcash"}
+{"timestamp": "2025-11-06 10:49:02", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P6,540.00, Paid P7,909.90, Change P1,369.90, Tender: Cash P5,090.60, GCash P2,819.30. Items: Laundry Stool - Medium x1; Laundry Stool - Medium x6; Pitcher (with twist lock feature) x3; Buffet Tray x1; 4-seater Table x3; Airtight Canister x3"}
+{"timestamp": "2025-11-06 10:49:55", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 126.9s (Needs Improvement), 73.9% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 10:50:03", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 10:50:10", "user": "cashier", "action": "Added item to cart", "details": "Chair with Backrest x2 (SKU 9716- Gray)"}
+{"timestamp": "2025-11-06 10:50:14", "user": "cashier", "action": "Set next item quantity", "details": "6"}
+{"timestamp": "2025-11-06 10:50:24", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x6 (SKU 2207 -  Brown_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 10:50:30", "user": "cashier", "action": "Set next item quantity", "details": "6"}
+{"timestamp": "2025-11-06 10:50:34", "user": "cashier", "action": "Added item to cart", "details": "4-seater Table x6 (SKU 870 - MOCHA)"}
+{"timestamp": "2025-11-06 10:50:37", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:50:43", "user": "cashier", "action": "Set next item quantity", "details": "4"}
+{"timestamp": "2025-11-06 10:50:49", "user": "cashier", "action": "Added item to cart", "details": "Tumbler - Medium x4 (SKU 982-M)"}
+{"timestamp": "2025-11-06 10:50:58", "user": "cashier", "action": "Set next item quantity", "details": "7"}
+{"timestamp": "2025-11-06 10:51:08", "user": "cashier", "action": "Added item to cart", "details": "Shoemate x7 (SKU 9759-M)"}
+{"timestamp": "2025-11-06 10:51:14", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 10:51:21", "user": "cashier", "action": "Set next item quantity", "details": "5"}
+{"timestamp": "2025-11-06 10:51:28", "user": "cashier", "action": "Added item to cart", "details": "4.3 L Airtight Grab & Go Handy Box-S x5 (SKU 616-S)"}
+{"timestamp": "2025-11-06 10:51:35", "user": "cashier", "action": "Selected payment method", "details": "Cash And Gcash"}
+{"timestamp": "2025-11-06 10:52:04", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P16,165.00, Paid P16,264.90, Change P99.90, Tender: Cash P7,638.90, GCash P8,626.00. Items: Chair with Backrest x2; Laundry Basket x6; 4-seater Table x6; Tumbler - Medium x4; Shoemate x7; 4.3 L Airtight Grab & Go Handy Box-S x5"}
+{"timestamp": "2025-11-06 10:52:41", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 128.6s (Needs Improvement), 80.0% (Fair), receipt yes"}
+{"timestamp": "2025-11-06 11:04:59", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-06 11:05:08", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 11:05:14", "user": "cashier", "action": "Added item to cart", "details": "2.25L Urban Gourmet x2 (SKU 812)"}
+{"timestamp": "2025-11-06 11:05:18", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 11:05:20", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 11:05:24", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 11:05:29", "user": "cashier", "action": "Added item to cart", "details": "1.8L Rectangular EZI Food Keeper x2 (SKU 728)"}
+{"timestamp": "2025-11-06 11:05:34", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 11:05:38", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P380.00, Paid P380.00, Change P0.00, Tender: Cash P380.00. Items: 2.25L Urban Gourmet x2; 1.8L Rectangular EZI Food Keeper x2"}
+{"timestamp": "2025-11-06 11:05:44", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 38.9s (Good), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 11:05:53", "user": "cashier", "action": "Added item to cart", "details": "Chair with Backrest x1 (SKU 9716- Brown)"}
+{"timestamp": "2025-11-06 11:05:56", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 11:06:04", "user": "cashier", "action": "Added item to cart", "details": "Buffet Tray x3 (SKU 714-S)"}
+{"timestamp": "2025-11-06 11:06:08", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 11:06:10", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P1,080.00, Paid P1,080.00, Change P0.00, Tender: Cash P1,080.00. Items: Chair with Backrest x1; Buffet Tray x3"}
+{"timestamp": "2025-11-06 11:06:13", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 26.5s (Good), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 11:06:28", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 11:06:32", "user": "cashier", "action": "Added item to cart", "details": "Lunch Box x3 (SKU 510)"}
+{"timestamp": "2025-11-06 11:06:39", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 11:06:43", "user": "cashier", "action": "Added item to cart", "details": "4-seater Table x2 (SKU 870 - Brown)"}
+{"timestamp": "2025-11-06 11:06:46", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 11:06:48", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 11:06:54", "user": "cashier", "action": "Set next item quantity", "details": "832"}
+{"timestamp": "2025-11-06 11:06:57", "user": "cashier", "action": "Set next item quantity", "details": "1"}
+{"timestamp": "2025-11-06 11:07:00", "user": "cashier", "action": "Added item to cart", "details": "400ml Urban Gourmet x1 (SKU 832)"}
+{"timestamp": "2025-11-06 11:07:06", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 11:07:11", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P3,355.00, Paid P3,375.00, Change P20.00, Tender: Cash P3,375.00. Items: Lunch Box x3; 4-seater Table x2; 400ml Urban Gourmet x1"}
+{"timestamp": "2025-11-06 11:07:13", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 58.5s (Needs Improvement), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 11:07:21", "user": "cashier", "action": "Simulation completed", "details": "3 customers | 134.1s | 100.0% accuracy"}
+{"timestamp": "2025-11-06 11:18:27", "user": "cashier", "action": "Simulation started", "details": "5 practice customers (Easy)"}
+{"timestamp": "2025-11-06 11:18:37", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 11:18:43", "user": "cashier", "action": "Added item to cart", "details": "Buffet Tray x2 (SKU 714-S)"}
+{"timestamp": "2025-11-06 11:18:48", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 11:18:50", "user": "cashier", "action": "Checkout cancelled", "details": "Cash payment entry cancelled"}
+{"timestamp": "2025-11-06 11:18:51", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 11:18:54", "user": "cashier", "action": "Selected payment method", "details": "Cash And Gcash"}
+{"timestamp": "2025-11-06 11:18:55", "user": "cashier", "action": "Checkout cancelled", "details": "Cash portion entry cancelled"}
+{"timestamp": "2025-11-06 11:18:56", "user": "cashier", "action": "Selected payment method", "details": "Gcash Only"}
+{"timestamp": "2025-11-06 11:19:00", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P420.00, Paid P440.00, Change P20.00, Tender: GCash P440.00. Items: Buffet Tray x2"}
+{"timestamp": "2025-11-06 11:19:02", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 32.6s (Good), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 11:33:51", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-06 11:38:43", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-06 11:38:50", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 11:38:52", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 11:38:59", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 11:39:00", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 11:39:00", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 11:39:00", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 11:53:26", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 11:53:28", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 11:53:30", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 11:53:32", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-06 11:53:35", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 11:53:36", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 11:53:36", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 11:53:38", "user": "cashier", "action": "Completed checkout", "details": "Total P870.00, Paid P870.00, Change P0.00, Tender: Cash P870.00. Items: Laundry Basket x1; Laundry Basket x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-06 12:15:19", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 12:15:29", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-06 12:17:00", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 90.0s (Needs Improvement), 0.0% (Needs Attention), receipt no"}
+{"timestamp": "2025-11-06 12:18:12", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 12:20:00", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-06 12:20:06", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 12:20:11", "user": "cashier", "action": "Added item to cart", "details": "Christmas set bundle #286 x3 (SKU ST-PT-25-CM-02)"}
+{"timestamp": "2025-11-06 12:20:19", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-06 12:20:32", "user": "cashier", "action": "Voided cart item", "details": "Laundry Stool - Small x1"}
+{"timestamp": "2025-11-06 12:20:37", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Medium x1 (SKU 2501-2)"}
+{"timestamp": "2025-11-06 12:20:43", "user": "cashier", "action": "Selected payment method", "details": "Gcash Only"}
+{"timestamp": "2025-11-06 12:20:47", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P1,170.00, Paid P1,180.00, Change P10.00, Tender: GCash P1,180.00. Items: Christmas set bundle #286 x3; Laundry Stool - Medium x1"}
+{"timestamp": "2025-11-06 12:21:03", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 46.4s (Needs Improvement), 100.0% (Perfect), receipt yes"}
+{"timestamp": "2025-11-06 12:21:10", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-06 12:21:13", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 12:21:15", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P305.00, Paid P305.00, Change P0.00, Tender: Cash P305.00. Items: 24.5L Trash Bin x1"}
+{"timestamp": "2025-11-06 12:21:37", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 11.9s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 12:21:41", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 12:21:42", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 12:21:44", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 12:21:46", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P870.00, Paid P870.00, Change P0.00, Tender: Cash P870.00. Items: Laundry Basket x1; Laundry Basket x1"}
+{"timestamp": "2025-11-06 12:21:59", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 8.9s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 12:22:17", "user": "cashier", "action": "Simulation completed", "details": "3 customers | 118.2s | 33.3% accuracy"}
+{"timestamp": "2025-11-06 12:33:43", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 12:33:47", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-06 12:33:50", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 12:33:52", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 - Cream_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 12:33:54", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 12:33:55", "user": "cashier", "action": "Checkout cancelled", "details": "Cash payment entry cancelled"}
+{"timestamp": "2025-11-06 12:33:57", "user": "cashier", "action": "Selected payment method", "details": "Cash And Gcash"}
+{"timestamp": "2025-11-06 12:33:59", "user": "cashier", "action": "Checkout blocked", "details": "Combined tender short by P775.00"}
+{"timestamp": "2025-11-06 12:34:00", "user": "cashier", "action": "Selected payment method", "details": "Gcash Only"}
+{"timestamp": "2025-11-06 12:34:01", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P775.00, Paid P775.00, Change P0.00, Tender: GCash P775.00. Items: Laundry Basket x1; Laundry Basket x1"}
+{"timestamp": "2025-11-06 12:34:07", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 14.6s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 12:34:09", "user": "cashier", "action": "Checkout cancelled", "details": "Cart empty"}
+{"timestamp": "2025-11-06 12:34:11", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 12:34:13", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 12:34:15", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 12:34:16", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 8.7s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 12:34:18", "user": "cashier", "action": "Checkout cancelled", "details": "Cart empty"}
+{"timestamp": "2025-11-06 12:34:19", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 - Cream_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 12:34:21", "user": "cashier", "action": "Selected payment method", "details": "Gcash Only"}
+{"timestamp": "2025-11-06 12:34:23", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: GCash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 12:34:25", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 6.3s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 12:34:41", "user": "cashier", "action": "Simulation completed", "details": "3 customers | 38.4s | 0.0% accuracy"}
+{"timestamp": "2025-11-06 13:01:40", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 13:01:41", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-06 13:01:42", "user": "cashier", "action": "Voided cart item", "details": "50 L Storage Box x1"}
+{"timestamp": "2025-11-06 13:01:44", "user": "cashier", "action": "Voided cart item", "details": "50 L Storage Box x1"}
+{"timestamp": "2025-11-06 13:01:49", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-06 13:01:53", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 13:01:56", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:01:57", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 13:01:59", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 8.3s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 13:02:03", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 - Cream)"}
+{"timestamp": "2025-11-06 13:02:04", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:02:06", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 13:02:07", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 6.9s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 13:02:09", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 - Cream)"}
+{"timestamp": "2025-11-06 13:02:10", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:02:12", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 13:02:14", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 5.1s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 13:02:50", "user": "cashier", "action": "Simulation completed", "details": "3 customers | 24.8s | 0.0% accuracy"}
+{"timestamp": "2025-11-06 13:25:23", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-06 13:25:36", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 13:25:39", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:25:41", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 13:25:45", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 17.9s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 13:25:47", "user": "cashier", "action": "Checkout cancelled", "details": "Cart empty"}
+{"timestamp": "2025-11-06 13:25:48", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-06 13:25:50", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:25:52", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P825.00, Paid P825.00, Change P0.00, Tender: Cash P825.00. Items: 19.5L Trash Bin x1"}
+{"timestamp": "2025-11-06 13:25:53", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 6.6s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 13:25:54", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x1 (SKU 339-4)"}
+{"timestamp": "2025-11-06 13:25:55", "user": "cashier", "action": "Selected payment method", "details": "Gcash Only"}
+{"timestamp": "2025-11-06 13:25:57", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P175.00, Paid P175.00, Change P0.00, Tender: GCash P175.00. Items: Airtight Canister x1"}
+{"timestamp": "2025-11-06 13:26:13", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 4.2s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-06 13:27:20", "user": "cashier", "action": "Simulation completed", "details": "3 customers | 49.5s | 0.0% accuracy"}
+{"timestamp": "2025-11-06 13:27:26", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 13:27:27", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 - Cream)"}
+{"timestamp": "2025-11-06 13:27:29", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:27:30", "user": "cashier", "action": "Checkout cancelled", "details": "Cash payment entry cancelled"}
+{"timestamp": "2025-11-06 13:27:31", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:27:33", "user": "cashier", "action": "Completed checkout", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 13:27:38", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 13:42:33", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 13:42:35", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-06 13:42:40", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:42:43", "user": "cashier", "action": "Completed checkout", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket x1"}
+{"timestamp": "2025-11-06 13:51:40", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 13:51:42", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 13:51:44", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-06 13:57:31", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x2 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 13:57:35", "user": "cashier", "action": "Added item to cart", "details": "400ml Urban Gourmet x1 (SKU 832)"}
+{"timestamp": "2025-11-06 13:57:40", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x3 (SKU 109_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 13:57:46", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x5 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 13:57:50", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x9 (SKU 2207 - Cream)"}
+{"timestamp": "2025-11-06 13:57:54", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 - Cream)"}
+{"timestamp": "2025-11-06 13:57:56", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-06 13:57:58", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2207 -  Brown)"}
+{"timestamp": "2025-11-06 13:58:00", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-06 13:58:02", "user": "cashier", "action": "Added item to cart", "details": "Buffet Tray x1 (SKU 714-B)"}
+{"timestamp": "2025-11-06 13:58:09", "user": "cashier", "action": "Checkout cancelled", "details": "Payment method dialog closed"}
+{"timestamp": "2025-11-06 13:58:10", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 13:58:12", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-06 13:58:13", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 13:58:13", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-06 13:58:15", "user": "cashier", "action": "Completed checkout", "details": "Total P11,850.00, Paid P11,850.00, Change P0.00, Tender: Cash P11,850.00. Items: Laundry Basket x2; 400ml Urban Gourmet x1; 50 L Storage Box x3; Laundry Basket x5; Laundry Basket x9; Laundry Basket x1; Laundry Basket x1; Laundry Basket x1; 19.5L Trash Bin x1; Buffet Tray x1; ... +1 more"}
+{"timestamp": "2025-11-06 13:58:28", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 17:10:52", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 17:11:03", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207)"}
+{"timestamp": "2025-11-06 17:11:10", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-06 17:11:31", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-06 17:11:36", "user": "cashier", "action": "Added item to cart", "details": "Chair with Backrest GRAY x1 (SKU 9716)"}
+{"timestamp": "2025-11-06 17:12:16", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 17:12:19", "user": "cashier", "action": "Updated cart item quantity", "details": "Laundry Basket x2"}
+{"timestamp": "2025-11-06 17:16:21", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 17:16:23", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x2 (SKU 109_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 17:16:27", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 17:16:31", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 17:17:29", "user": "cashier", "action": "Set next item quantity", "details": "1"}
+{"timestamp": "2025-11-06 17:17:32", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 17:17:35", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x2 (SKU 2206-A_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-06 17:25:57", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207)"}
+{"timestamp": "2025-11-06 17:26:01", "user": "cashier", "action": "Updated cart item quantity", "details": "Laundry Basket BROWN x2"}
+{"timestamp": "2025-11-06 17:26:05", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-06 17:26:08", "user": "cashier", "action": "Set next item quantity", "details": "3"}
+{"timestamp": "2025-11-06 17:26:10", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x3 (SKU 2207)"}

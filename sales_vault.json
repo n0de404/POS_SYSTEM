@@ -1,24 +1,76 @@
 {
   "summary": {
     "2207 -  Brown": {
-      "qty_sold": 1,
-      "revenue": 435.0
+      "qty_sold": 14,
+      "revenue": 5220.0
     },
     "2206-A": {
-      "qty_sold": 12,
-      "revenue": 3740.0
+      "qty_sold": 13,
+      "revenue": 4080.0
     },
     "ST-PT-25-CM-09": {
-      "qty_sold": 1,
-      "revenue": 335.0
+      "qty_sold": 3,
+      "revenue": 1005.0
     },
     "727": {
       "qty_sold": 4,
       "revenue": 600.0
+    },
+    "EB-S": {
+      "qty_sold": 3,
+      "revenue": 30.0
+    },
+    "9516-brown": {
+      "qty_sold": 1,
+      "revenue": 315.0
+    },
+    "9616": {
+      "qty_sold": 4,
+      "revenue": 520.0
+    },
+    "339-3": {
+      "qty_sold": 3,
+      "revenue": 420.0
+    },
+    "9716- Gray": {
+      "qty_sold": 2,
+      "revenue": 900.0
+    },
+    "9868-S": {
+      "qty_sold": 2,
+      "revenue": 1960.0
+    },
+    "852": {
+      "qty_sold": 1,
+      "revenue": 85.0
+    },
+    "812": {
+      "qty_sold": 1,
+      "revenue": 90.0
+    },
+    "2207 - Cream": {
+      "qty_sold": 11,
+      "revenue": 4785.0
+    },
+    "832": {
+      "qty_sold": 1,
+      "revenue": 35.0
+    },
+    "109": {
+      "qty_sold": 6,
+      "revenue": 2595.0
+    },
+    "233": {
+      "qty_sold": 4,
+      "revenue": 825.0
+    },
+    "714-B": {
+      "qty_sold": 1,
+      "revenue": 225.0
     }
   },
-  "cash_total": 5110.0,
+  "cash_total": 23690.0,
   "gcash_total": 0.0,
   "period_start": "2025-11-04T10:32:10",
-  "last_saved": "2025-11-06T09:55:09"
+  "last_saved": "2025-11-06T17:26:31"
 }

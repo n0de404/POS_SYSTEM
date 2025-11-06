@@ -13,6 +13,8 @@ from copy import deepcopy
 import types
 import shutil
 import textwrap
+import random
+from collections import Counter
 try:
     import serial
     from serial.tools import list_ports
@@ -47,11 +49,13 @@ from PIL import Image, ImageQt, ImageOps
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
                              QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
-                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton, QAbstractItemView)
-from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush, QConicalGradient
+                             QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton, QAbstractItemView, QMenu)
+from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush, QConicalGradient, QShortcut, QKeySequence
 from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, pyqtSignal, QTimer
 # --- Global Variables ---
 products = {}  # Stores product data from the database: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
+product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
+product_variant_aliases = {}  # Maps base stock numbers to their first variant SKU for barcode scanning
 cart = []  # Stores items currently in the cart
 current_item_count = 1  # Default quantity for next scanned item
 current_discount = 0.0  # Default discount percentage for next scanned item
@@ -62,7 +66,6 @@ current_sales_number = 1  # For unique sales receipt numbers
 current_transaction_number = 1  # For unique transaction numbers
 inventory_summary = {}
 sales_summary = {}  # Stores sales data for reporting: {barcode: {"qty_sold": ..., "revenue": ...}}
-product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
 promo_inventory_map = {}  # Maps promo code to the number of base units consumed per sale
 product_promo_columns = []  # Tracks additional promo pricing codes detected in the database
 bundle_promos = {}  # Stores bundle promos with their component details
@@ -1383,6 +1386,7 @@ def load_products_from_database(parent=None):
                     normalized_promos[code] = float(row["price"])
                 else:
                     normalized_promos[code] = float(price)
+            variant_sku = f"{barcode}__{row['product_id']}"
             variant_entry = {
                 "name": row["name"],
                 "price": float(row["price"]),
@@ -1390,6 +1394,7 @@ def load_products_from_database(parent=None):
                 "original_stock": int(row["stock"]),
                 "image_filename": resolve_product_image_filename(barcode, row.get("image_filename")),
                 "promos": normalized_promos,
+                "sku": variant_sku,
                 "_product_id": row["product_id"],
             }
             products.setdefault(barcode, []).append(variant_entry)
@@ -1682,12 +1687,20 @@ def rebuild_product_variant_lookup():
     """
     Builds a flat lookup mapping SKU codes (including promo variants) to their base product information.
     """
-    global product_variant_lookup
+    global product_variant_lookup, product_variant_aliases
     product_variant_lookup = {}
+    product_variant_aliases = {}
     for barcode, variants in products.items():
         for index, variant in enumerate(variants):
+            variant_sku = variant.get("sku")
+            if not variant_sku:
+                product_id = variant.get("_product_id")
+                suffix = product_id if product_id is not None else index + 1
+                variant_sku = f"{barcode}__{suffix}"
+                variant["sku"] = variant_sku
             base_entry = {
                 "sku": barcode,
+                "variant_sku": variant_sku,
                 "base_barcode": barcode,
                 "variant_index": index,
                 "promo_code": None,
@@ -1696,11 +1709,12 @@ def rebuild_product_variant_lookup():
                 "inventory_usage": 1,
                 "image_filename": variant.get('image_filename', '')
             }
-            # Only set the base barcode entry once to preserve the primary lookup
-            product_variant_lookup.setdefault(barcode, base_entry)
+            product_variant_lookup[variant_sku] = base_entry
+            product_variant_aliases.setdefault(barcode, variant_sku)
             promos = variant.get('promos', {}) or {}
             for promo_code, promo_price in promos.items():
-                promo_sku = f"{barcode}_{promo_code}"
+                variant_suffix = variant_sku
+                promo_sku = f"{variant_suffix}_{promo_code}"
                 inventory_usage = promo_inventory_map.get(promo_code, 1)
                 if promo_code not in promo_inventory_map:
                     print(
@@ -1710,6 +1724,7 @@ def rebuild_product_variant_lookup():
                 promo_price_value = promo_price if promo_price is not None else variant['price']
                 product_variant_lookup[promo_sku] = {
                     "sku": promo_sku,
+                    "variant_sku": variant_sku,
                     "base_barcode": barcode,
                     "variant_index": index,
                     "promo_code": promo_code,
@@ -4352,6 +4367,927 @@ class BasketPromoDialog(QDialog):
         self.populate_tier_combo()
         self.clear_form()
 # ----------------- Main Window -----------------
+class StickyNoteWidget(QFrame):
+    """Simple draggable widget that displays the active practice order."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StickyNoteWidget")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setFrameShadow(QFrame.Shadow.Raised)
+        self.setStyleSheet(
+            """
+            QFrame#StickyNoteWidget {
+                background-color: #F6E27F;
+                border: 1px solid #C9AE4B;
+                border-radius: 12px;
+            }
+            QLabel {
+                color: #3B2F1D;
+            }
+            """
+        )
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._drag_offset = None
+        self._user_positioned = False
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(8)
+        self.title_label = QLabel("Customer Order")
+        title_font = QFont("Arial", 14, QFont.Weight.Bold)
+        self.title_label.setFont(title_font)
+        self.title_label.setWordWrap(True)
+        layout.addWidget(self.title_label)
+        self.body_label = QLabel("")
+        body_font = QFont("Arial", 12)
+        self.body_label.setFont(body_font)
+        self.body_label.setWordWrap(True)
+        layout.addWidget(self.body_label)
+        self.resize(260, 180)
+        self._time_fraction = None
+        self._time_color = QColor("#3CB371")
+        self._base_border_color = QColor("#C9AE4B")
+        self._progress_margin = 10
+
+    def set_note_content(self, customer_number, scenario):
+        difficulty = scenario.get("difficulty", "easy").capitalize()
+        self.title_label.setText(f"{difficulty} - Customer {customer_number}")
+        items = scenario.get("items") or []
+        payment = scenario.get("payment") or {}
+        if not items:
+            self.body_label.setText("No items listed.")
+            return
+        lines = ["Items:"]
+        for entry in items:
+            name = entry.get("name") or entry.get("stock_no") or "Item"
+            stock = entry.get("stock_no") or ""
+            qty = entry.get("qty", 1)
+            price = entry.get("price", 0)
+            lines.append(f"- {name} ({stock}) x{qty} @ P{price:,.2f}")
+        method = payment.get("method", "").title()
+        lines.append("")
+        lines.append("Payment:")
+        if method:
+            lines.append(f"- Method: {method}")
+        cash_amount = payment.get("cash_amount", 0.0)
+        gcash_amount = payment.get("gcash_amount", 0.0)
+        if cash_amount:
+            lines.append(f"- Cash: P{cash_amount:,.0f}")
+        if gcash_amount:
+            lines.append(f"- GCash: P{gcash_amount:,.0f}")
+        if not cash_amount and not gcash_amount:
+            lines.append("- Amount provided at checkout")
+        expected_change = payment.get("expected_change")
+        if expected_change is not None:
+            lines.append(f"- Expected change: P{expected_change:,.2f}")
+        time_limit = scenario.get("time_limit_seconds")
+        if time_limit:
+            lines.append("")
+            lines.append(f"Time limit: {int(time_limit)}s")
+        self.body_label.setText("\n".join(lines))
+
+    def set_time_progress(self, fraction, color):
+        if fraction is None or fraction <= 0:
+            self._time_fraction = None
+            self.update()
+            return
+        clamped = max(0.0, min(1.0, float(fraction)))
+        self._time_fraction = clamped
+        if color is not None:
+            self._time_color = color
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._time_fraction is None or self._time_fraction <= 0:
+            return
+        left = float(self._progress_margin)
+        right = float(self.width() - self._progress_margin)
+        y = float(self._progress_margin)
+        base_pen = QPen(self._base_border_color, 4)
+        base_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        progress_pen = QPen(self._time_color, 4)
+        progress_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(base_pen)
+        painter.drawLine(QPointF(left, y), QPointF(right, y))
+        progress_width = (right - left) * self._time_fraction
+        if progress_width > 0:
+            end_point = QPointF(left + progress_width, y)
+            painter.setPen(progress_pen)
+            painter.drawLine(QPointF(left, y), end_point)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_offset
+            self.move(new_pos)
+            self._user_positioned = True
+            event.accept()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+        super().mouseReleaseEvent(event)
+
+    def show_at_default(self, parent_window):
+        if self._user_positioned:
+            self.show()
+            self.raise_()
+            return
+        if parent_window is None:
+            self.show()
+            self.raise_()
+            return
+        parent_geom = parent_window.frameGeometry()
+        note_width = self.width()
+        available_width = parent_geom.width()
+        offset_x = max(20, available_width - note_width - 40)
+        x = parent_geom.x() + offset_x
+        y = parent_geom.y() + 100
+        self.move(int(x), int(y))
+        self.show()
+        self.raise_()
+
+    def reset_position_flag(self):
+        self._user_positioned = False
+
+
+class CustomerSimulationManager:
+    """Helper to run a quick three-customer practice simulation inside the POS UI."""
+
+    DIFFICULTY_SETTINGS = {
+        "easy": {
+            "line_min": 1,
+            "line_max": 3,
+            "qty_min": 1,
+            "qty_max": 3,
+            "allow_bundles": False,
+            "allow_promos": False,
+            "payment_modes": ["cash only", "gcash only"],
+            "extra_cents": [0, 500, 1000, 2000],
+            "time_limit_seconds": 90,
+        },
+        "medium": {
+            "line_min": 2,
+            "line_max": 4,
+            "qty_min": 1,
+            "qty_max": 5,
+            "allow_bundles": True,
+            "allow_promos": True,
+            "payment_modes": ["cash only", "gcash only", "cash and gcash"],
+            "extra_cents": [0, 500, 1000, 2000, 5000],
+            "time_limit_seconds": 60,
+        },
+        "hard": {
+            "line_min": 5,
+            "line_max": 7,
+            "qty_min": 1,
+            "qty_max": 7,
+            "allow_bundles": True,
+            "allow_promos": True,
+            "payment_modes": ["cash only", "gcash only", "cash and gcash"],
+            "extra_cents": [500, 1000, 2000, 5000, 10000],
+            "time_limit_seconds": 45,
+        },
+    }
+
+    SPEED_THRESHOLDS = (20.0, 40.0)  # seconds for Excellent / Good speed feedback
+
+    def __init__(self, main_window):
+        self.main_window = main_window
+        self.difficulty = "easy"
+        self.note = StickyNoteWidget()
+        self.timeout_timer = QTimer(main_window)
+        self.timeout_timer.setSingleShot(True)
+        self.timeout_timer.timeout.connect(self._handle_time_limit_expired)
+        self.progress_timer = QTimer(main_window)
+        self.progress_timer.setInterval(200)
+        self.progress_timer.timeout.connect(self._update_time_progress_visual)
+        self.customer_deadline = None
+        self.customer_total_count = 0
+        if self.main_window is not None:
+            try:
+                self.main_window.destroyed.connect(self.note.close)
+            except Exception:
+                pass
+        self.reset_state()
+
+    def reset_state(self):
+        self.is_active = False
+        self.scenarios = []
+        self.current_index = -1
+        self.start_time = None
+        self.customer_start_time = None
+        self.results = []
+        self.time_limit_seconds = None
+        self.customer_deadline = None
+        self.customer_total_count = 0
+        if hasattr(self, "timeout_timer") and self.timeout_timer:
+            self.timeout_timer.stop()
+        if hasattr(self, "progress_timer") and self.progress_timer:
+            self.progress_timer.stop()
+        if hasattr(self, "note") and self.note:
+            self.note.hide()
+            self.note.reset_position_flag()
+            self.note.set_time_progress(None, None)
+        self._update_button_state()
+
+    def set_difficulty(self, difficulty):
+        normalized = (difficulty or "").strip().lower()
+        if normalized not in self.DIFFICULTY_SETTINGS:
+            normalized = "easy"
+        self.difficulty = normalized
+        settings = self.DIFFICULTY_SETTINGS[self.difficulty]
+        self.time_limit_seconds = settings.get("time_limit_seconds") or None
+
+    def _prompt_difficulty(self):
+        options = ["Easy", "Medium", "Hard"]
+        current_label = self.difficulty.capitalize()
+        try:
+            selection, ok = QInputDialog.getItem(
+                self.main_window,
+                "Simulation Difficulty",
+                "Choose practice difficulty:",
+                options,
+                current=options.index(current_label) if current_label in options else 0,
+                editable=False,
+            )
+        except Exception:
+            return current_label
+        if not ok:
+            return None
+        return selection
+
+    def _prompt_customer_count(self):
+        try:
+            value, ok = QInputDialog.getInt(
+                self.main_window,
+                "Number of Customers",
+                "How many practice customers?",
+                value=max(1, self.customer_total_count) if self.customer_total_count else 3,
+                min=1,
+                max=10,
+            )
+        except Exception:
+            return None
+        if not ok:
+            return None
+        return int(value)
+
+    def _update_button_state(self):
+        button = getattr(self.main_window, "btn_start_simulation", None)
+        if button is not None:
+            button.setEnabled(not self.is_active)
+
+    def start_simulation(self):
+        if self.is_active:
+            QMessageBox.information(
+                self.main_window,
+                "Customer Simulation",
+                "A simulation is already running. Complete the current practice customers first.",
+            )
+            return
+        existing_sessions = getattr(self.main_window, "customer_sessions", [])
+        has_active_carts = any(session.get("cart") for session in existing_sessions or [])
+        if has_active_carts:
+            confirm = QMessageBox.question(
+                self.main_window,
+                "Start Simulation",
+                "Starting the simulation will clear the current customer queue. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        selection = self._prompt_difficulty()
+        if selection is None:
+            return
+        self.set_difficulty(selection)
+        customer_count = self._prompt_customer_count()
+        if customer_count is None:
+            return
+        scenarios = self._build_scenarios(customer_count)
+        if not scenarios:
+            show_warning(
+                "Customer Simulation",
+                "No sellable products were found, so the practice run cannot start right now.",
+                self.main_window,
+            )
+            return
+        self.reset_state()
+        self.scenarios = scenarios
+        self.customer_total_count = len(scenarios)
+        self.is_active = True
+        self._update_button_state()
+        self.start_time = time.perf_counter()
+        self.main_window.initialize_customer_queue()
+        self.main_window.log_user_action(
+            "Simulation started",
+            f"{len(scenarios)} practice customers ({self.difficulty.capitalize()})",
+        )
+        self._begin_customer(0, announce=True)
+
+    def _collect_candidate_items(self, allow_bundles, allow_promos):
+        items = []
+        lookups = list(product_variant_lookup.values())
+        seen_skus = set()
+        for data in lookups:
+            if not isinstance(data, dict):
+                continue
+            sku = data.get("sku") or data.get("base_barcode")
+            if not sku or sku in seen_skus:
+                continue
+            bundle_components = data.get("bundle_components")
+            if bundle_components and not allow_bundles:
+                continue
+            promo_code = data.get("promo_code")
+            if promo_code and not allow_promos:
+                continue
+            price = data.get("price")
+            if price is None:
+                continue
+            try:
+                price_value = float(price)
+            except (TypeError, ValueError):
+                continue
+            if price_value <= 0:
+                continue
+            seen_skus.add(sku)
+            promo_multiplier = self._promo_quantity_multiplier(promo_code)
+            items.append(
+                {
+                    "sku": sku,
+                    "stock_no": sku,
+                    "variant_index": data.get("variant_index"),
+                    "name": data.get("name") or sku,
+                    "price": price_value,
+                    "inventory_usage": data.get("inventory_usage", 1) or 1,
+                    "bundle_components": deepcopy(bundle_components) if bundle_components else None,
+                    "bundle_code": data.get("bundle_code"),
+                    "is_bundle": bool(bundle_components),
+                    "promo_code": promo_code,
+                    "promo_multiplier": promo_multiplier,
+                }
+            )
+        return items
+
+    def _promo_quantity_multiplier(self, promo_code):
+        if not promo_code:
+            return 1
+        code = str(promo_code).upper()
+        if "B1T1" in code:
+            return 2
+        if "B3T1" in code:
+            return 4
+        return 1
+
+    def _build_scenarios(self, count):
+        settings = self.DIFFICULTY_SETTINGS.get(self.difficulty, self.DIFFICULTY_SETTINGS["easy"])
+        allow_bundles = settings["allow_bundles"]
+        allow_promos = settings["allow_promos"]
+        candidates = self._collect_candidate_items(allow_bundles, allow_promos)
+        if not candidates and allow_bundles:
+            candidates = self._collect_candidate_items(False, allow_promos)
+        if not candidates:
+            return []
+        scenarios = []
+        for _ in range(count):
+            line_min = settings["line_min"]
+            line_max = settings["line_max"]
+            max_available = max(1, len(candidates))
+            upper_bound = min(line_max, max_available) if len(candidates) >= line_min else line_min
+            line_count = random.randint(line_min, max(upper_bound, line_min))
+            if len(candidates) >= line_count:
+                picked = random.sample(candidates, line_count)
+            else:
+                picked = [random.choice(candidates) for _ in range(line_count)]
+            aggregated = {}
+            for choice in picked:
+                key = (
+                    choice["stock_no"],
+                    choice.get("variant_index"),
+                    choice.get("bundle_code"),
+                    choice.get("promo_code"),
+                )
+                entry = aggregated.setdefault(
+                    key,
+                    {
+                        "stock_no": choice["stock_no"],
+                        "variant_index": choice.get("variant_index"),
+                        "name": choice["name"],
+                        "qty": 0,
+                        "price": choice["price"],
+                        "inventory_usage": choice.get("inventory_usage", 1),
+                        "bundle_code": choice.get("bundle_code"),
+                        "bundle_components": deepcopy(choice.get("bundle_components")) if choice.get("bundle_components") else None,
+                        "is_bundle": choice.get("is_bundle", False),
+                        "promo_code": choice.get("promo_code"),
+                        "promo_multiplier": choice.get("promo_multiplier", 1),
+                    },
+                )
+                base_qty = random.randint(settings["qty_min"], settings["qty_max"])
+                multiplier = entry.get("promo_multiplier", 1) or 1
+                entry["qty"] += base_qty * multiplier
+            scenario_items = list(aggregated.values())
+            total_due = sum(item["price"] * item["qty"] for item in scenario_items)
+            payment = self._generate_payment(total_due, settings)
+            scenarios.append(
+                {
+                    "items": scenario_items,
+                    "payment": payment,
+                    "total": total_due,
+                    "difficulty": self.difficulty,
+                    "time_limit_seconds": settings.get("time_limit_seconds"),
+                }
+            )
+        return scenarios
+
+    def _generate_payment(self, total_due, settings):
+        def to_cents(amount):
+            return int(round(float(amount) * 100))
+
+        def to_whole_amount(cents):
+            return float(int(cents // 100)) if cents >= 0 else 0.0
+
+        def to_change_amount(cents):
+            return round(cents / 100.0, 2)
+
+        raw_total_cents = max(0, to_cents(total_due))
+        total_cents = raw_total_cents
+        if total_cents % 100:
+            total_cents = ((total_cents + 99) // 100) * 100
+        extra_options = settings.get("extra_cents") or [0]
+        extra_cents = random.choice(extra_options)
+        total_paid_cents = max(total_cents, total_cents + extra_cents)
+        if total_paid_cents % 100:
+            total_paid_cents = ((total_paid_cents + 99) // 100) * 100
+        method = random.choice(settings.get("payment_modes") or ["cash only"])
+        cash_cents = 0
+        gcash_cents = 0
+        if method == "cash only":
+            cash_cents = total_paid_cents
+        elif method == "gcash only":
+            gcash_cents = total_paid_cents
+        else:
+            if total_paid_cents < 200:
+                method = "cash only"
+                cash_cents = total_paid_cents
+            elif total_paid_cents <= 0:
+                method = "cash only"
+                cash_cents = 0
+            else:
+                valid_cash_values = list(range(100, total_paid_cents, 100))
+                if not valid_cash_values:
+                    cash_cents = total_paid_cents
+                    gcash_cents = 0
+                    method = "cash only"
+                else:
+                    cash_cents = random.choice(valid_cash_values)
+                    gcash_cents = total_paid_cents - cash_cents
+                    if gcash_cents <= 0:
+                        cash_cents = total_paid_cents
+                        gcash_cents = 0
+                        method = "cash only"
+        expected_change_cents = max(0, cash_cents + gcash_cents - raw_total_cents)
+        return {
+            "method": method,
+            "cash_amount": to_whole_amount(cash_cents),
+            "gcash_amount": to_whole_amount(gcash_cents),
+            "total_paid": to_whole_amount(cash_cents + gcash_cents),
+            "expected_change": to_change_amount(expected_change_cents),
+        }
+
+    def _begin_customer(self, index, announce=False):
+        if index < 0 or index >= len(self.scenarios):
+            return
+        self.current_index = index
+        self.customer_start_time = time.perf_counter()
+        self._update_sticky_note(self.scenarios[index], index + 1, announce=announce)
+        self._start_customer_timer()
+
+    def _update_sticky_note(self, scenario, number, announce=False):
+        if not self.note:
+            return
+        self.note.set_note_content(number, scenario)
+        self.note.show_at_default(self.main_window)
+        if announce:
+            QMessageBox.information(
+                self.main_window,
+                "Customer Simulation",
+                "A movable sticky note has been added to the screen with the current customer's order "
+                "and payment details. Drag it anywhere that's convenient while you process the cart.",
+            )
+    def _start_customer_timer(self):
+        if not self.timeout_timer:
+            return
+        self.timeout_timer.stop()
+        if self.progress_timer:
+            self.progress_timer.stop()
+        self.customer_deadline = None
+        scenario = None
+        if 0 <= self.current_index < len(self.scenarios):
+            scenario = self.scenarios[self.current_index]
+        seconds = None
+        if scenario:
+            seconds = scenario.get("time_limit_seconds")
+        if not seconds or seconds <= 0:
+            self.time_limit_seconds = None
+            if self.note:
+                self.note.set_time_progress(None, None)
+            return
+        self.time_limit_seconds = seconds
+        self.customer_deadline = time.perf_counter() + seconds
+        if self.note:
+            self.note.set_time_progress(1.0, QColor("#3CB371"))
+        self.timeout_timer.start(int(seconds * 1000))
+        if self.progress_timer:
+            self.progress_timer.start()
+        self._update_time_progress_visual()
+
+    def _update_time_progress_visual(self):
+        if not self.note:
+            return
+        if not self.customer_deadline or not self.time_limit_seconds:
+            self.note.set_time_progress(None, None)
+            if self.progress_timer:
+                self.progress_timer.stop()
+            return
+        remaining = self.customer_deadline - time.perf_counter()
+        if remaining <= 0:
+            self.note.set_time_progress(None, None)
+            if self.progress_timer:
+                self.progress_timer.stop()
+            return
+        fraction = max(0.0, min(1.0, remaining / self.time_limit_seconds))
+        if fraction > 0.5:
+            color = QColor("#3CB371")
+        elif fraction > 0.25:
+            color = QColor("#FFA500")
+        else:
+            color = QColor("#FF4C4C")
+        self.note.set_time_progress(fraction, color)
+
+    def handle_checkout_completion(
+        self,
+        cart_snapshot,
+        total,
+        total_paid,
+        change,
+        payment_method,
+        receipt_text_content,
+        cash_amount,
+        gcash_amount,
+    ):
+        self.timeout_timer.stop()
+        if self.progress_timer:
+            self.progress_timer.stop()
+        if not self.is_active or self.current_index < 0:
+            return
+        if self.current_index >= len(self.scenarios):
+            return
+        self._finalize_customer(
+            cart_snapshot,
+            total,
+            total_paid,
+            change,
+            payment_method,
+            receipt_text_content,
+            cash_amount,
+            gcash_amount,
+            timed_out=False,
+        )
+
+    def _handle_time_limit_expired(self):
+        if not self.is_active or self.current_index < 0:
+            return
+        if self.progress_timer:
+            self.progress_timer.stop()
+        scenario = self.scenarios[self.current_index]
+        cart_snapshot = [deepcopy(entry) for entry in getattr(self.main_window, "cart", [])]
+        if hasattr(self.main_window, "cart"):
+            self.main_window.cart.clear()
+        if hasattr(self.main_window, "refresh_cart_display"):
+            self.main_window.refresh_cart_display()
+        if hasattr(self.main_window, "update_total"):
+            self.main_window.update_total()
+        self._finalize_customer(
+            cart_snapshot,
+            scenario.get("total", 0.0),
+            total_paid=0.0,
+            change=0.0,
+            payment_method="timeout",
+            receipt_text_content="",
+            cash_amount=0.0,
+            gcash_amount=0.0,
+            timed_out=True,
+        )
+
+    def _finalize_customer(
+        self,
+        cart_snapshot,
+        total,
+        total_paid,
+        change,
+        payment_method,
+        receipt_text_content,
+        cash_amount,
+        gcash_amount,
+        timed_out,
+    ):
+        if self.timeout_timer:
+            self.timeout_timer.stop()
+        if self.progress_timer:
+            self.progress_timer.stop()
+        self.customer_deadline = None
+        if self.note:
+            self.note.set_time_progress(None, None)
+        scenario = self.scenarios[self.current_index]
+        customer_number = self.current_index + 1
+        elapsed = (time.perf_counter() - self.customer_start_time) if self.customer_start_time else 0.0
+        if timed_out and self.time_limit_seconds:
+            elapsed = self.time_limit_seconds
+        evaluation = self._evaluate_accuracy(scenario, cart_snapshot)
+        accuracy = evaluation["accuracy"]
+        issues = evaluation["issue_lines"]
+        payment_evaluation = self._evaluate_payment(
+            scenario,
+            total,
+            total_paid,
+            change,
+            payment_method,
+            cash_amount,
+            gcash_amount,
+            timed_out=timed_out,
+        )
+        issues.extend(payment_evaluation["issues"])
+        accuracy_rating = self._accuracy_rating_label(accuracy)
+        speed_rating = self._speed_rating_label(elapsed)
+        receipt_provided = bool(str(receipt_text_content or "").strip())
+        if not receipt_provided:
+            issues.append("Receipt not detected. Be sure to print or hand a receipt to the customer.")
+        feedback_lines = [
+            f"Customer {customer_number} served!",
+            f"Time: {elapsed:.1f}s ({speed_rating})",
+            f"Accuracy: {accuracy * 100:.1f}% ({accuracy_rating})",
+            f"Tendered: P{total_paid:,.0f} | Change: P{change:,.2f} | Method: {payment_method.title()}",
+            "Receipt: Provided" if receipt_provided else "Receipt: Missing",
+        ]
+        if payment_evaluation["expected_summary"]:
+            feedback_lines.append(payment_evaluation["expected_summary"])
+        if issues:
+            feedback_lines.append("")
+            feedback_lines.append("Notes:")
+            feedback_lines.extend(f" - {entry}" for entry in issues)
+        else:
+            feedback_lines.append("No issues detected - great work!")
+        if not timed_out:
+            QMessageBox.information(
+                self.main_window,
+                "Simulation Feedback",
+                "\n".join(feedback_lines),
+            )
+        log_details = (
+            f"Customer {customer_number}: {elapsed:.1f}s ({speed_rating}), "
+            f"{accuracy * 100:.1f}% ({accuracy_rating}), receipt {'yes' if receipt_provided else 'no'}"
+        )
+        self.main_window.log_user_action("Simulation feedback", log_details)
+        result_entry = {
+            "scenario": scenario,
+            "elapsed": elapsed,
+            "accuracy": accuracy,
+            "issues": issues,
+            "missing": evaluation["missing"],
+            "extras": evaluation["extras"],
+            "speed_rating": speed_rating,
+            "accuracy_rating": accuracy_rating,
+            "receipt_provided": receipt_provided,
+            "payment_result": payment_evaluation,
+            "timed_out": timed_out,
+        }
+        self.results.append(result_entry)
+        self.current_index += 1
+        if self.current_index < len(self.scenarios):
+            self._begin_customer(self.current_index, announce=False)
+            return
+        total_customers = len(self.results)
+        total_time = (time.perf_counter() - self.start_time) if self.start_time else sum(
+            entry["elapsed"] for entry in self.results
+        )
+        average_time = total_time / total_customers if total_customers else 0.0
+        average_accuracy = (
+            sum(entry["accuracy"] for entry in self.results) / total_customers if total_customers else 0.0
+        )
+        collected_issues = [issue for entry in self.results for issue in entry["issues"]]
+        if average_accuracy >= 0.97 and not collected_issues:
+            performance_banner = "Outstanding you are good at this!"
+        elif average_accuracy >= 0.8:
+            performance_banner = "Not bad for a beginner"
+        else:
+            performance_banner = "You are the worst cashier!"
+        summary_lines = [
+            performance_banner,
+            "",
+            "Practice run complete!",
+            f"Customers served: {total_customers}",
+            f"Total time: {total_time:.1f}s (avg {average_time:.1f}s per customer)",
+            f"Average accuracy: {average_accuracy * 100:.1f}%",
+        ]
+        if collected_issues:
+            summary_lines.append("")
+            summary_lines.append("Things to review next time:")
+            unique_issues = []
+            seen_issues = set()
+            for item in collected_issues:
+                normalized = item.strip().lower()
+                if normalized in seen_issues:
+                    continue
+                seen_issues.add(normalized)
+                unique_issues.append(item.strip())
+            for issue in unique_issues:
+                summary_lines.append(f"- {issue}")
+        else:
+            summary_lines.append("No discrepancies were detected - excellent job!")
+        QMessageBox.information(
+            self.main_window,
+            "Simulation Summary",
+            "\n".join(summary_lines),
+        )
+        if self.note:
+            self.note.hide()
+        self.main_window.log_user_action(
+            "Simulation completed",
+            f"{total_customers} customers | {total_time:.1f}s | {average_accuracy * 100:.1f}% accuracy",
+        )
+        self.reset_state()
+
+    def _evaluate_accuracy(self, scenario, cart_snapshot):
+        expected = Counter()
+        expected_names = {}
+        for item in scenario.get("items", []):
+            key = (item["stock_no"], item["variant_index"])
+            expected[key] += float(item.get("qty", 0) or 0)
+            expected_names[key] = item.get("name") or item["stock_no"]
+        actual = Counter()
+        actual_names = {}
+        for entry in cart_snapshot or []:
+            if entry.get("is_freebie"):
+                continue
+            stock_no = entry.get("base_stock_no") or entry.get("Stock No.")
+            if not stock_no:
+                continue
+            variant_index = int(entry.get("variant_index", 0) or 0)
+            qty = self._as_float(entry.get("qty", 1), default=1.0)
+            usage = self._as_float(entry.get("inventory_usage", 1), default=1.0)
+            actual_qty = qty * usage
+            key = (stock_no, variant_index)
+            actual[key] += actual_qty
+            if key not in actual_names:
+                actual_names[key] = entry.get("name") or stock_no
+        total_expected_units = sum(expected.values())
+        correctly_matched = sum(min(expected[key], actual.get(key, 0.0)) for key in expected)
+        accuracy = (correctly_matched / total_expected_units) if total_expected_units else 1.0
+        missing = []
+        extras = []
+        for key, expected_qty in expected.items():
+            actual_qty = actual.get(key, 0.0)
+            if actual_qty + 1e-6 < expected_qty:
+                missing.append((key, expected_qty - actual_qty))
+        for key, actual_qty in actual.items():
+            expected_qty = expected.get(key, 0.0)
+            if actual_qty - 1e-6 > expected_qty:
+                extras.append((key, actual_qty - expected_qty))
+        issue_lines = []
+        for key, qty in missing:
+            label = expected_names.get(key) or actual_names.get(key) or key[0]
+            issue_lines.append(f"Missing {self._format_quantity(qty)} x {label}")
+        for key, qty in extras:
+            label = actual_names.get(key) or expected_names.get(key) or key[0]
+            issue_lines.append(f"Unexpected {self._format_quantity(qty)} x {label}")
+        return {
+            "accuracy": max(0.0, min(1.0, accuracy)),
+            "missing": missing,
+            "extras": extras,
+            "issue_lines": issue_lines,
+        }
+
+    def _evaluate_payment(
+        self,
+        scenario,
+        total,
+        total_paid,
+        change,
+        payment_method,
+        cash_amount,
+        gcash_amount,
+        timed_out=False,
+    ):
+        expected = scenario.get("payment") or {}
+        expected_method = (expected.get("method") or "").lower()
+        tolerance = 0.05
+        issues = []
+        expected_summary = ""
+        def _format_amount(value):
+            return f"P{value:,.0f}"
+        actual_cash = round(cash_amount or 0.0, 2)
+        actual_gcash = round(gcash_amount or 0.0, 2)
+        actual_change = round(change or 0.0, 2)
+        expected_cash = round(expected.get("cash_amount", 0.0), 2)
+        expected_gcash = round(expected.get("gcash_amount", 0.0), 2)
+        expected_change = round(expected.get("expected_change", 0.0), 2)
+        expected_total_paid = round(expected.get("total_paid", expected_cash + expected_gcash), 2)
+        if timed_out:
+            issues.append("Checkout not completed before the time limit.")
+            return {
+                "issues": issues,
+                "expected_summary": "",
+                "expected": expected,
+            }
+        if expected_method and expected_method != payment_method.lower():
+            issues.append(f"Payment method mismatch. Expected {expected_method.title()}, entered {payment_method.title()}.")
+        if expected_method in ("cash only", "cash and gcash"):
+            if abs(actual_cash - expected_cash) > tolerance:
+                issues.append(
+                    f"Cash tender entered {_format_amount(actual_cash)} but expected {_format_amount(expected_cash)}."
+                )
+        else:
+            if actual_cash > tolerance:
+                issues.append("Cash tender was provided but the customer planned to pay without cash.")
+        if expected_method in ("gcash only", "cash and gcash"):
+            if abs(actual_gcash - expected_gcash) > tolerance:
+                issues.append(
+                    f"GCash tender entered {_format_amount(actual_gcash)} but expected {_format_amount(expected_gcash)}."
+                )
+        else:
+            if actual_gcash > tolerance:
+                issues.append("GCash tender was provided but the customer planned to pay without GCash.")
+        if abs((actual_cash + actual_gcash) - expected_total_paid) > tolerance:
+            issues.append(
+                f"Total tender {_format_amount(actual_cash + actual_gcash)} differs from expected {_format_amount(expected_total_paid)}."
+            )
+        if abs(actual_change - expected_change) > tolerance:
+            issues.append(
+                f"Change should be {_format_amount(expected_change)} but {_format_amount(actual_change)} was recorded."
+            )
+        if expected_method:
+            parts = [f"Expected method: {expected_method.title()}"]
+            if expected_cash:
+                parts.append(f"Cash {_format_amount(expected_cash)}")
+            if expected_gcash:
+                parts.append(f"GCash {_format_amount(expected_gcash)}")
+            parts.append(f"Change P{expected_change:,.2f}")
+            expected_summary = " | ".join(parts)
+        return {
+            "issues": issues,
+            "expected_summary": expected_summary,
+            "expected": expected,
+        }
+
+    def _format_quantity(self, value):
+        if abs(value - int(value)) < 1e-6:
+            return str(int(round(value)))
+        return f"{value:.2f}"
+
+    def _as_float(self, value, default=0.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _accuracy_rating_label(self, accuracy):
+        if accuracy >= 0.99:
+            return "Perfect"
+        if accuracy >= 0.9:
+            return "Great"
+        if accuracy >= 0.75:
+            return "Fair"
+        return "Needs Attention"
+
+    def _speed_rating_label(self, seconds_elapsed):
+        if seconds_elapsed <= self.SPEED_THRESHOLDS[0]:
+            return "Excellent"
+        if seconds_elapsed <= self.SPEED_THRESHOLDS[1]:
+            return "Good"
+        return "Needs Improvement"
+
+
 class POSMainWindow(QMainWindow):
     def __init__(self, username, parent=None):
         super().__init__(parent)
@@ -4359,6 +5295,7 @@ class POSMainWindow(QMainWindow):
         self.setWindowTitle(f"POS System - Logged in as: {username}")
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
+        self._status_bar = self.statusBar()
         # Initialize global variables that need to be widgets for updating
         self.label_product_image = None
         self.label_product_name_display = None
@@ -4370,6 +5307,8 @@ class POSMainWindow(QMainWindow):
         self.customer_sessions = []
         self.customer_tabs = None
         self.btn_add_customer = None
+        self.customer_tab_shortcuts = []
+        self.customer_name_counter = 1
         self.current_item_count = current_item_count
         self.current_discount = current_discount
         self.products = products  # Make sure this is accessibl
@@ -4384,6 +5323,7 @@ class POSMainWindow(QMainWindow):
         self.scanner_worker = None
         self.activity_logs = load_activity_logs()
         ensure_sales_vault_started()
+        self.simulation_manager = CustomerSimulationManager(self)
         self.init_ui()
         self.initialize_customer_queue()
         self.init_barcode_scanner()
@@ -4400,6 +5340,22 @@ class POSMainWindow(QMainWindow):
             entry["details"] = details
         self.activity_logs.append(entry)
         append_activity_log_entry(entry)
+    def _apply_next_item_quantity(self, quantity, *, log_message=None, status_message=None):
+        """Update the next item quantity tracked by the POS."""
+        global current_item_count
+        try:
+            qty = int(quantity)
+        except (TypeError, ValueError):
+            qty = 1
+        qty = max(1, qty)
+        current_item_count = qty
+        self.current_item_count = qty
+        if status_message:
+            bar = getattr(self, "_status_bar", None)
+            if bar:
+                bar.showMessage(status_message.format(qty=qty), 2500)
+        if log_message:
+            self.log_user_action(log_message, str(qty))
     def init_ui(self):
         # Create layout structure
         main_layout = QHBoxLayout()
@@ -4432,14 +5388,24 @@ class POSMainWindow(QMainWindow):
         queue_layout.addWidget(queue_label)
         self.customer_tabs = QTabWidget()
         self.customer_tabs.setTabsClosable(True)
+        tab_bar = self.customer_tabs.tabBar()
+        tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tab_bar.customContextMenuRequested.connect(self.show_customer_tab_context_menu)
         self.customer_tabs.tabCloseRequested.connect(self.close_customer_session)
         self.customer_tabs.currentChanged.connect(self.on_customer_tab_changed)
         queue_layout.addWidget(self.customer_tabs, stretch=1)
+        self._install_customer_tab_shortcuts()
         self.btn_add_customer = QPushButton("Add Customer")
         self.btn_add_customer.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         self.btn_add_customer.setStyleSheet("padding: 6px 12px;")
         self.btn_add_customer.clicked.connect(lambda: self.add_customer_session())
         queue_layout.addWidget(self.btn_add_customer)
+        self.btn_start_simulation = QPushButton("Start Simulation")
+        self.btn_start_simulation.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        self.btn_start_simulation.setStyleSheet("padding: 6px 12px;")
+        self.btn_start_simulation.setToolTip("Run a three-customer practice scenario with timing and accuracy feedback.")
+        self.btn_start_simulation.clicked.connect(self.simulation_manager.start_simulation)
+        queue_layout.addWidget(self.btn_start_simulation)
         pos_layout.addLayout(queue_layout)
         # Cart display list
         self.listbox = QListWidget()
@@ -4544,6 +5510,7 @@ class POSMainWindow(QMainWindow):
             ("CHECKOUT", self.checkout),
         ]
         fixed_button_height = 90
+        self.set_quantity_button = None
         for index, (text, slot) in enumerate(button_specs):
             btn = QPushButton(text)
             btn.setMinimumSize(160, fixed_button_height)
@@ -4551,11 +5518,19 @@ class POSMainWindow(QMainWindow):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setObjectName(f"ActionButton_{text.replace(' ', '_')}")
             btn.clicked.connect(slot)
+            if text == "SET QUANTITY":
+                btn.setToolTip("Set quantity for the next item (Ctrl+Q)")
+                self.set_quantity_button = btn
             row = index // 2
             col = index % 2
             buttons_grid_layout.addWidget(btn, row, col)
             self.action_buttons[text] = btn
         self.update_action_button_styles(self.current_effective_theme)
+        self.quantity_shortcut_action = QAction("Set Quantity", self)
+        self.quantity_shortcut_action.setShortcut(QKeySequence("Ctrl+Q"))
+        self.quantity_shortcut_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.quantity_shortcut_action.triggered.connect(self.set_item_count)
+        self.addAction(self.quantity_shortcut_action)
         # If desired, add empty stretch or spacer to fill the last grid cell (row=2, col=1)
         # Set the layout for the info group and add it to the main layout
         # Add the grid layout directly to the product_display_frame, below the info_group
@@ -4580,6 +5555,7 @@ class POSMainWindow(QMainWindow):
         # Add this in POSMainWindow.__init__ or __init_ui__ after creating self.listbox:    
         self.listbox.setSelectionMode(QListWidget.SelectionMode.SingleSelection)  # Only single item selection allowed
         self.listbox.currentRowChanged.connect(self.display_selected_cart_item)
+        self.listbox.itemDoubleClicked.connect(self.prompt_cart_item_quantity_update)
         self.apply_theme_styles(self.current_effective_theme)
     def init_barcode_scanner(self):
         if self.scanner_worker:
@@ -4604,9 +5580,64 @@ class POSMainWindow(QMainWindow):
         if not barcode_value:
             return
         self.process_scanned_code(barcode_value)
+    def _install_customer_tab_shortcuts(self):
+        if self.customer_tab_shortcuts:
+            return
+        for idx in range(1, 10):
+            sequence = QKeySequence(f"Ctrl+{idx}")
+            shortcut = QShortcut(sequence, self)
+            shortcut.activated.connect(partial(self._activate_customer_tab_by_shortcut, idx - 1))
+            self.customer_tab_shortcuts.append(shortcut)
+
+    def _activate_customer_tab_by_shortcut(self, index):
+        if self.customer_tabs is None:
+            return
+        if 0 <= index < self.customer_tabs.count():
+            self.customer_tabs.setCurrentIndex(index)
+
+    def show_customer_tab_context_menu(self, position):
+        if self.customer_tabs is None:
+            return
+        tab_bar = self.customer_tabs.tabBar()
+        index = tab_bar.tabAt(position)
+        if index < 0 or index >= len(self.customer_sessions):
+            return
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename Customer")
+        selected_action = menu.exec(tab_bar.mapToGlobal(position))
+        if selected_action == rename_action:
+            self.prompt_rename_customer_session(index)
+
+    def prompt_rename_customer_session(self, index):
+        if index < 0 or index >= len(self.customer_sessions):
+            return
+        current_name = self.customer_sessions[index].get("name") or f"Customer {index + 1}"
+        try:
+            new_name, ok = QInputDialog.getText(
+                self,
+                "Rename Customer",
+                "Customer name:",
+                text=current_name,
+            )
+        except Exception:
+            return
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            return
+        self.customer_sessions[index]["name"] = new_name
+        self.update_customer_tab_labels()
+
+    def _generate_next_customer_name(self):
+        name = f"Customer {self.customer_name_counter}"
+        self.customer_name_counter += 1
+        return name
+
     def initialize_customer_queue(self):
         if self.customer_tabs is None:
             return
+        self.customer_name_counter = 1
         self.customer_tabs.blockSignals(True)
         while self.customer_tabs.count():
             self.customer_tabs.removeTab(0)
@@ -4617,7 +5648,8 @@ class POSMainWindow(QMainWindow):
         if self.customer_tabs is None:
             return
         # Ensure internal list stays aligned with tab order
-        session = {"cart": []}
+        session_name = self._generate_next_customer_name()
+        session = {"cart": [], "name": session_name}
         tab_placeholder = QWidget()
         index = self.customer_tabs.addTab(tab_placeholder, "")
         if index >= len(self.customer_sessions):
@@ -4650,6 +5682,7 @@ class POSMainWindow(QMainWindow):
         self.customer_tabs.removeTab(index)
         self.customer_tabs.blockSignals(False)
         if not self.customer_sessions:
+            self.customer_name_counter = 1
             self.add_customer_session(set_active=True)
         else:
             next_index = min(index, len(self.customer_sessions) - 1)
@@ -4663,7 +5696,12 @@ class POSMainWindow(QMainWindow):
         if self.customer_tabs is None:
             return
         for idx in range(self.customer_tabs.count()):
-            self.customer_tabs.setTabText(idx, f"Customer {idx + 1}")
+            session_name = ""
+            if 0 <= idx < len(self.customer_sessions):
+                session_name = self.customer_sessions[idx].get("name", "")
+            if not session_name:
+                session_name = f"Customer {idx + 1}"
+            self.customer_tabs.setTabText(idx, session_name)
     def on_customer_tab_changed(self, index):
         if index < 0 or index >= len(self.customer_sessions):
             self.cart = []
@@ -4754,6 +5792,46 @@ class POSMainWindow(QMainWindow):
             self.set_display_context(base_barcode, variant_index, item.get('bundle_code'))
         else:
             self.clear_product_display()
+
+    def prompt_cart_item_quantity_update(self, list_item):
+        """
+        Prompt for a new quantity when a cart row is double-clicked.
+        """
+        if list_item is None or not hasattr(self, "listbox"):
+            return
+        row = self.listbox.row(list_item)
+        if row < 0 or row >= len(self.cart):
+            return
+        cart_entry = self.cart[row]
+        if cart_entry.get("is_freebie"):
+            show_warning("Quantity Locked", "Freebie quantities cannot be changed.", self)
+            return
+        current_qty = cart_entry.get("qty", 1)
+        try:
+            current_qty = max(1, int(current_qty))
+        except (TypeError, ValueError):
+            current_qty = 1
+        product_name = cart_entry.get("name") or cart_entry.get("Stock No.") or "Item"
+        prompt_text = f"Enter new quantity for '{product_name}':"
+        new_qty, ok = QInputDialog.getInt(
+            self,
+            "Update Item Quantity",
+            prompt_text,
+            current_qty,
+            min=1,
+            max=10000,
+        )
+        if not ok or new_qty == current_qty:
+            return
+        cart_entry["qty"] = new_qty
+        self.listbox.blockSignals(True)
+        list_item.setText(self.format_cart_item_label(cart_entry))
+        self.listbox.blockSignals(False)
+        self.listbox.setCurrentRow(row)
+        self.update_total()
+        self.display_selected_cart_item(row)
+        self.log_user_action("Updated cart item quantity", f"{product_name} x{new_qty}")
+
     def void_selected_item(self):
         """Remove the selected item from the cart without requiring a password."""
         selected_row = self.listbox.currentRow()
@@ -5257,6 +6335,11 @@ class POSMainWindow(QMainWindow):
         global current_item_count, current_discount
         lookup = product_variant_lookup.get(sku)
         if lookup is None:
+            alias_key = product_variant_aliases.get(sku)
+            if alias_key:
+                lookup = product_variant_lookup.get(alias_key)
+                sku = alias_key
+        if lookup is None:
             if show_not_found:
                 show_warning("Not Found", f"Barcode '{sku}' not found in product database.", self)
                 self.display_product_image(None, sku)
@@ -5343,6 +6426,7 @@ class POSMainWindow(QMainWindow):
             self.set_display_context(None, None, item.get("bundle_code"))
             self.clear_product_search_entry()
             current_item_count = 1
+            self.current_item_count = 1
             current_discount = 0.0
             self.update_total()
             return True
@@ -5382,6 +6466,7 @@ class POSMainWindow(QMainWindow):
         self.set_display_context(base_barcode, variant_index, None)
         self.clear_product_search_entry()
         current_item_count = 1
+        self.current_item_count = 1
         current_discount = 0.0
         self.update_total()
         return True
@@ -5421,6 +6506,40 @@ class POSMainWindow(QMainWindow):
         added = self.add_item_to_cart_by_sku(barcode_input)
         if not added:
             self.display_product_image(None, barcode_input)
+    def keyPressEvent(self, event):
+        if event is not None:
+            modifiers = event.modifiers()
+            if modifiers & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.AltModifier):
+                key = event.key()
+                shortcut_map = {
+                    Qt.Key.Key_1: 1,
+                    Qt.Key.Key_2: 2,
+                    Qt.Key.Key_3: 3,
+                    Qt.Key.Key_4: 4,
+                    Qt.Key.Key_5: 5,
+                    Qt.Key.Key_6: 6,
+                    Qt.Key.Key_7: 7,
+                    Qt.Key.Key_8: 8,
+                    Qt.Key.Key_9: 9,
+                    Qt.Key.Key_Exclam: 1,
+                    Qt.Key.Key_At: 2,
+                    Qt.Key.Key_NumberSign: 3,
+                    Qt.Key.Key_Dollar: 4,
+                    Qt.Key.Key_Percent: 5,
+                    Qt.Key.Key_AsciiCircum: 6,
+                    Qt.Key.Key_Ampersand: 7,
+                    Qt.Key.Key_Asterisk: 8,
+                    Qt.Key.Key_ParenLeft: 9,
+                }
+                qty = shortcut_map.get(key)
+                if qty:
+                    self._apply_next_item_quantity(
+                        qty,
+                        status_message="Next item quantity set to {qty}",
+                    )
+                    event.accept()
+                    return
+        super().keyPressEvent(event)
     def update_total(self):
         total = 0
         for item in self.cart:
@@ -5459,6 +6578,7 @@ class POSMainWindow(QMainWindow):
         global current_sales_number, current_transaction_number, receipts_archive
         global total_cash_tendered, total_gcash_tendered
         global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault
+        simulation_mode = bool(getattr(self, "simulation_manager", None) and self.simulation_manager.is_active)
         if not self.cart:
             show_info("Info", "Cart is empty. Please add items before checking out.", self)
             self.log_user_action("Checkout cancelled", "Cart empty")
@@ -5578,36 +6698,44 @@ class POSMainWindow(QMainWindow):
                 self.log_user_action("Checkout blocked", f"Combined tender short by P{total - total_paid:,.2f}")
                 return
         change = total_paid - total
-        self.apply_basket_freebies_to_cart(subtotal_for_promos)
+        if not simulation_mode:
+            self.apply_basket_freebies_to_cart(subtotal_for_promos)
         # Find the highest existing sales number and transaction number in receipts_archive
-        highest_sales_number = 0
-        highest_transaction_number = 0
-        for key in receipts_archive.keys():
-            sales_match = re.search(r"SALES#: (\d+)", key)  # Extract the sales number using regex
-            trans_match = re.search(r"TRANS#: (\d+)", key)  # Extract the transaction number using regex
-            if sales_match:
-                try:
-                    sales_number = int(sales_match.group(1))
-                    highest_sales_number = max(highest_sales_number, sales_number)
-                except ValueError:
-                    pass  # Ignore keys that don't have a valid sales number
-            if trans_match:
-                try:
-                    transaction_number = int(trans_match.group(1))
-                    highest_transaction_number = max(highest_transaction_number, transaction_number)
-                except ValueError:
-                    pass  # Ignore keys that don't have a valid transaction number
-        db_sales_highest, db_transaction_highest = fetch_highest_sales_identifiers(self)
-        highest_sales_number = max(highest_sales_number, db_sales_highest)
-        highest_transaction_number = max(highest_transaction_number, db_transaction_highest)
-        # Calculate the next available sales number and transaction number
-        next_sales_number = highest_sales_number + 1
-        next_transaction_number = highest_transaction_number + 1
-        # Generate the unique sales transaction label
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        current_time = datetime.now().strftime("%H:%M:%S")
-        sales_trans_label = f"SALES#: {next_sales_number:06d}   TRANS#: {next_transaction_number:06d}"
-        sales_trans_line = f"{sales_trans_label}"
+        if not simulation_mode:
+            highest_sales_number = 0
+            highest_transaction_number = 0
+            for key in receipts_archive.keys():
+                sales_match = re.search(r"SALES#: (\d+)", key)  # Extract the sales number using regex
+                trans_match = re.search(r"TRANS#: (\d+)", key)  # Extract the transaction number using regex
+                if sales_match:
+                    try:
+                        sales_number = int(sales_match.group(1))
+                        highest_sales_number = max(highest_sales_number, sales_number)
+                    except ValueError:
+                        pass  # Ignore keys that don't have a valid sales number
+                if trans_match:
+                    try:
+                        transaction_number = int(trans_match.group(1))
+                        highest_transaction_number = max(highest_transaction_number, transaction_number)
+                    except ValueError:
+                        pass  # Ignore keys that don't have a valid transaction number
+            db_sales_highest, db_transaction_highest = fetch_highest_sales_identifiers(self)
+            highest_sales_number = max(highest_sales_number, db_sales_highest)
+            highest_transaction_number = max(highest_transaction_number, db_transaction_highest)
+            next_sales_number = highest_sales_number + 1
+            next_transaction_number = highest_transaction_number + 1
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            current_time = datetime.now().strftime("%H:%M:%S")
+            sales_trans_label = f"SALES#: {next_sales_number:06d}   TRANS#: {next_transaction_number:06d}"
+            sales_trans_line = f"{sales_trans_label}"
+        else:
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            current_time = datetime.now().strftime("%H:%M:%S")
+            customer_number = (
+                (self.simulation_manager.current_index + 1) if self.simulation_manager.current_index >= 0 else 1
+            )
+            sales_trans_label = f"SIM CUSTOMER {customer_number:02d} {current_time}"
+            sales_trans_line = sales_trans_label
         # Generate receipt text content based on printable layout
         layout_info = compute_receipt_layout()
         width = int(layout_info["total_width"])
@@ -5694,18 +6822,21 @@ class POSMainWindow(QMainWindow):
         if payment_method == "cash and gcash":
             append_columns("Cash:", f"P{cash_amount:,.2f}")
             append_columns("GCash:", f"P{gcash_amount:,.2f}")
-            total_gcash_tendered += gcash_amount
-            total_cash_tendered += cash_amount
-            total_cash_tendered_vault += cash_amount
-            total_gcash_tendered_vault += gcash_amount
+            if not simulation_mode:
+                total_gcash_tendered += gcash_amount
+                total_cash_tendered += cash_amount
+                total_cash_tendered_vault += cash_amount
+                total_gcash_tendered_vault += gcash_amount
         elif payment_method == "cash only":
             append_columns("Cash:", f"P{cash_amount:,.2f}")
-            total_cash_tendered += cash_amount
-            total_cash_tendered_vault += cash_amount
+            if not simulation_mode:
+                total_cash_tendered += cash_amount
+                total_cash_tendered_vault += cash_amount
         elif payment_method == "gcash only":
             append_columns("GCash:", f"P{gcash_amount:,.2f}")
-            total_gcash_tendered += gcash_amount
-            total_gcash_tendered_vault += gcash_amount
+            if not simulation_mode:
+                total_gcash_tendered += gcash_amount
+                total_gcash_tendered_vault += gcash_amount
         append_columns("Change:", f"P{change:,.2f}")
         append_columns(f"Payment Method: {payment_method.title()}")
         receipt_text_content += "-" * width + "\n"
@@ -5719,126 +6850,126 @@ class POSMainWindow(QMainWindow):
             wrapped_lines = textwrap.wrap(message, width) or [""]
             for line in wrapped_lines:
                 receipt_text_content += f"{line:^{width}}\n"
-        # Store the receipt in archive
-        receipts_archive[sales_trans_label] = receipt_text_content
-        # Show receipt window
+        if not simulation_mode:
+            receipts_archive[sales_trans_label] = receipt_text_content
         receipt_dialog = ReceiptDialog(receipt_text_content, self)
+        if simulation_mode:
+            receipt_dialog.setWindowTitle("Simulation Receipt")
         receipt_dialog.exec()
         # Update stock & sales summary after transaction
         sale_items_records = []
-        for item in self.cart:
-            is_freebie = bool(item.get("is_freebie"))
-            if item.get('bundle_components'):
-                bundle_qty = item.get('qty', 1)
-                component_infos = []
-                total_base_value = 0.0
-                for component in item['bundle_components']:
-                    barcode = component.get("barcode")
-                    variant_index = component.get("variant_index", 0)
-                    quantity_per_bundle = component.get("quantity", 1)
-                    deduction_units = bundle_qty * quantity_per_bundle
-                    variants = products.get(barcode, [])
-                    if not variants:
-                        print(f"Warning: bundle component '{barcode}' missing during inventory update.")
-                        continue
-                    if variant_index >= len(variants):
-                        variant_index = 0
-                    variant = variants[variant_index]
-                    variant["stock"] -= deduction_units
-                    base_price = float(variant.get("price", 0))
-                    base_value = base_price * quantity_per_bundle
-                    total_base_value += base_value
-                    component_infos.append({
-                        "barcode": barcode,
-                        "product_id": variant.get("_product_id"),
-                        "deduction_units": deduction_units,
-                        "base_value": base_value
-                    })
-                for info in component_infos:
-                    barcode = info["barcode"]
-                    product_id = info["product_id"]
-                    quantity = info["deduction_units"]
-                    if not is_freebie:
-                        if barcode not in sales_summary:
-                            sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
-                        if barcode not in sales_summary_vault:
-                            sales_summary_vault[barcode] = {"qty_sold": 0, "revenue": 0.0}
-                        sales_summary[barcode]["qty_sold"] += quantity
-                        sales_summary_vault[barcode]["qty_sold"] += quantity
-                    if total_base_value > 0:
-                        share = info["base_value"] / total_base_value
-                    else:
-                        share = 1 / len(component_infos) if component_infos else 0
-                    component_total = 0.0 if is_freebie else item['price'] * bundle_qty * share
-                    if not is_freebie:
-                        sales_summary[barcode]["revenue"] += component_total
-                        sales_summary_vault[barcode]["revenue"] += component_total
-                    price_per_unit = (component_total / quantity) if quantity and component_total else 0.0
-                    if product_id:
-                        sale_items_records.append({
-                            "product_id": product_id,
-                            "quantity": int(quantity),
-                            "price_per_unit": price_per_unit,
-                            "total_price": component_total,
-                            "is_freebie": is_freebie,
+        if not simulation_mode:
+            for item in self.cart:
+                is_freebie = bool(item.get("is_freebie"))
+                if item.get('bundle_components'):
+                    bundle_qty = item.get('qty', 1)
+                    component_infos = []
+                    total_base_value = 0.0
+                    for component in item['bundle_components']:
+                        barcode = component.get("barcode")
+                        variant_index = component.get("variant_index", 0)
+                        quantity_per_bundle = component.get("quantity", 1)
+                        deduction_units = bundle_qty * quantity_per_bundle
+                        variants = products.get(barcode, [])
+                        if not variants:
+                            print(f"Warning: bundle component '{barcode}' missing during inventory update.")
+                            continue
+                        if variant_index >= len(variants):
+                            variant_index = 0
+                        variant = variants[variant_index]
+                        variant["stock"] -= deduction_units
+                        base_price = float(variant.get("price", 0))
+                        base_value = base_price * quantity_per_bundle
+                        total_base_value += base_value
+                        component_infos.append({
+                            "barcode": barcode,
+                            "product_id": variant.get("_product_id"),
+                            "deduction_units": deduction_units,
+                            "base_value": base_value
                         })
-                continue
-            sku = item.get('Stock No.')
-            base_barcode = item.get('base_stock_no', sku)
-            qty = item.get('qty', 1)
-            inventory_usage = item.get('inventory_usage', 1)
-            variant_index = item.get('variant_index', 0)
-            deduction_units = qty * inventory_usage
-            variants = products.get(base_barcode, [])
-            if not variants:
-                print(f"Warning: Unable to update inventory. Base product '{base_barcode}' not found.")
-                continue
-            if variant_index >= len(variants):
-                variant_index = 0
-            variant = variants[variant_index]
-            variant["stock"] -= deduction_units
-            if isinstance(deduction_units, float) and deduction_units.is_integer():
-                deduction_units = int(deduction_units)
-            product_id = variant.get("_product_id")
-            line_total_amount = 0.0 if is_freebie else item['price'] * qty
-            if not is_freebie:
-                if base_barcode not in sales_summary:
-                    sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
-                if base_barcode not in sales_summary_vault:
-                    sales_summary_vault[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
-                sales_summary[base_barcode]["qty_sold"] += deduction_units
-                sales_summary[base_barcode]["revenue"] += line_total_amount
-                sales_summary_vault[base_barcode]["qty_sold"] += deduction_units
-                sales_summary_vault[base_barcode]["revenue"] += line_total_amount
-            price_per_unit = (line_total_amount / deduction_units) if deduction_units and line_total_amount else 0.0
-            if product_id:
-                sale_items_records.append({
-                    "product_id": product_id,
-                    "quantity": int(deduction_units),
-                    "price_per_unit": price_per_unit,
-                    "total_price": line_total_amount,
-                    "is_freebie": is_freebie,
-                })
-        self.persist_checkout_to_database(
-            next_sales_number,
-            sales_trans_label,
-            receipt_text_content,
-            total,
-            total_paid,
-            change,
-            payment_method,
-            sale_items_records,
-        )
-        # Persist updated product stock levels
-        save_products_to_database(self)
-        # Increment transaction numbers AFTER generating the label and receipt
-        current_sales_number = next_sales_number
-        current_transaction_number = next_transaction_number
-        # Save data after checkout
-        save_sales_summary()
-        save_receipts_archive()
-        save_sales_vault()
-        save_inventory_summary()
+                    for info in component_infos:
+                        barcode = info["barcode"]
+                        product_id = info["product_id"]
+                        quantity = info["deduction_units"]
+                        if not is_freebie:
+                            if barcode not in sales_summary:
+                                sales_summary[barcode] = {"qty_sold": 0, "revenue": 0.0}
+                            if barcode not in sales_summary_vault:
+                                sales_summary_vault[barcode] = {"qty_sold": 0, "revenue": 0.0}
+                            sales_summary[barcode]["qty_sold"] += quantity
+                            sales_summary_vault[barcode]["qty_sold"] += quantity
+                        if total_base_value > 0:
+                            share = info["base_value"] / total_base_value
+                        else:
+                            share = 1 / len(component_infos) if component_infos else 0
+                        component_total = 0.0 if is_freebie else item['price'] * bundle_qty * share
+                        if not is_freebie:
+                            sales_summary[barcode]["revenue"] += component_total
+                            sales_summary_vault[barcode]["revenue"] += component_total
+                        price_per_unit = (component_total / quantity) if quantity and component_total else 0.0
+                        if product_id:
+                            sale_items_records.append({
+                                "product_id": product_id,
+                                "quantity": int(quantity),
+                                "price_per_unit": price_per_unit,
+                                "total_price": component_total,
+                                "is_freebie": is_freebie,
+                            })
+                    continue
+                sku = item.get('Stock No.')
+                base_barcode = item.get('base_stock_no', sku)
+                qty = item.get('qty', 1)
+                inventory_usage = item.get('inventory_usage', 1)
+                variant_index = item.get('variant_index', 0)
+                deduction_units = qty * inventory_usage
+                variants = products.get(base_barcode, [])
+                if not variants:
+                    print(f"Warning: Unable to update inventory. Base product '{base_barcode}' not found.")
+                    continue
+                if variant_index >= len(variants):
+                    variant_index = 0
+                variant = variants[variant_index]
+                variant["stock"] -= deduction_units
+                if isinstance(deduction_units, float) and deduction_units.is_integer():
+                    deduction_units = int(deduction_units)
+                product_id = variant.get("_product_id")
+                line_total_amount = 0.0 if is_freebie else item['price'] * qty
+                if not is_freebie:
+                    if base_barcode not in sales_summary:
+                        sales_summary[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
+                    if base_barcode not in sales_summary_vault:
+                        sales_summary_vault[base_barcode] = {"qty_sold": 0, "revenue": 0.0}
+                    sales_summary[base_barcode]["qty_sold"] += deduction_units
+                    sales_summary[base_barcode]["revenue"] += line_total_amount
+                    sales_summary_vault[base_barcode]["qty_sold"] += deduction_units
+                    sales_summary_vault[base_barcode]["revenue"] += line_total_amount
+                price_per_unit = (line_total_amount / deduction_units) if deduction_units and line_total_amount else 0.0
+                if product_id:
+                    sale_items_records.append({
+                        "product_id": product_id,
+                        "quantity": int(deduction_units),
+                        "price_per_unit": price_per_unit,
+                        "total_price": line_total_amount,
+                        "is_freebie": is_freebie,
+                    })
+            self.persist_checkout_to_database(
+                next_sales_number,
+                sales_trans_label,
+                receipt_text_content,
+                total,
+                total_paid,
+                change,
+                payment_method,
+                sale_items_records,
+            )
+            save_products_to_database(self)
+            current_sales_number = next_sales_number
+            current_transaction_number = next_transaction_number
+            save_sales_summary()
+            save_receipts_archive()
+            save_sales_vault()
+            save_inventory_summary()
+        cart_snapshot = [deepcopy(entry) for entry in self.cart]
         tender_segments = []
         if cash_amount > 0:
             tender_segments.append(f"Cash P{cash_amount:,.2f}")
@@ -5859,8 +6990,9 @@ class POSMainWindow(QMainWindow):
         else:
             visible = item_descriptions
         cart_summary = "; ".join(visible) if visible else "No items recorded"
+        action_label = "Completed checkout (Simulation)" if simulation_mode else "Completed checkout"
         self.log_user_action(
-            "Completed checkout",
+            action_label,
             f"Total P{total:,.2f}, Paid P{total_paid:,.2f}, Change P{change:,.2f}, Tender: {tender_detail}. Items: {cart_summary}",
         )
         # Clear cart and UI
@@ -5869,6 +7001,17 @@ class POSMainWindow(QMainWindow):
         self.update_total()
         self.clear_product_display()
         self.handle_session_after_checkout()
+        if getattr(self, "simulation_manager", None):
+            self.simulation_manager.handle_checkout_completion(
+                cart_snapshot,
+                total,
+                total_paid,
+                change,
+                payment_method,
+                receipt_text_content,
+                cash_amount,
+                gcash_amount,
+            )
     def persist_checkout_to_database(
         self,
         next_sales_number,
@@ -5975,10 +7118,10 @@ class POSMainWindow(QMainWindow):
     def set_item_count(self):
         count, ok = QInputDialog.getInt(self, "Set Item Quantity", "Enter item quantity (1 or more):", min=1)
         if ok:
-            global current_item_count
-            current_item_count = count
-            show_info("Item Quantity Set", f"Quantity for next item set to {current_item_count}", self)
-            self.log_user_action("Set next item quantity", str(current_item_count))
+            self._apply_next_item_quantity(
+                count,
+                log_message="Set next item quantity",
+            )
     def inventory_management(self):
         dlg = InventoryManagementDialog(products, self)  # Pass the global products dictionary
         dlg.exec()
