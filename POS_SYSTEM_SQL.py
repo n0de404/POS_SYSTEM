@@ -6375,8 +6375,8 @@ class SalesSummaryDialog(QDialog):
         if effective == "dark":
             table_bg = self._mix_color(tokens["card_bg"], "#000000", 0.18)
             side_panel_bg = self._mix_color(tokens["card_bg"], "#000000", 0.28)
-            metric_bg = self._mix_color(tokens["card_bg"], "#ffffff", 0.12)
-            metric_border = self._mix_color(metric_bg, "#ffffff", 0.4)
+            metric_bg = self._mix_color(tokens["card_bg"], "#000000", 0.12)
+            metric_border = self._mix_color(metric_bg, "#000000", 0.4)
             metric_border_style = f"border: 1px solid {metric_border};"
             button_bg = self._mix_color(tokens["card_bg"], "#ffffff", 0.05)
             button_hover = self._mix_color(button_bg, "#ffffff", 0.12)
