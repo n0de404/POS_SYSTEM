@@ -740,3 +740,32 @@
 {"timestamp": "2025-11-07 12:02:52", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
 {"timestamp": "2025-11-07 12:02:52", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
 {"timestamp": "2025-11-07 12:02:58", "user": "cashier", "action": "Completed checkout", "details": "Total P5,190.00, Paid P5,190.00, Change P0.00, Tender: Cash P5,190.00. Items: 50 L Storage Box x1; 50 L Storage Box x1; 50 L Storage Box x2; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-07 13:33:07", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Hard)"}
+{"timestamp": "2025-11-07 13:33:15", "user": "cashier", "action": "Set next item quantity", "details": "4"}
+{"timestamp": "2025-11-07 13:33:17", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x4 (SKU 339-1)"}
+{"timestamp": "2025-11-07 13:33:20", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-07 13:33:25", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x2 (SKU 339-4)"}
+{"timestamp": "2025-11-07 13:33:27", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-07 13:33:34", "user": "cashier", "action": "Added item to cart", "details": "Chair with Backrest MOCHA x2 (SKU 9716-MOCHA)"}
+{"timestamp": "2025-11-07 13:33:40", "user": "cashier", "action": "Added item to cart", "details": "Chair with Armrest GRAY x1 (SKU 9718-GRAY)"}
+{"timestamp": "2025-11-07 13:33:43", "user": "cashier", "action": "Set next item quantity", "details": "16"}
+{"timestamp": "2025-11-07 13:33:49", "user": "cashier", "action": "Added item to cart", "details": "Stainless Steel Spoon & Fork w/ 909 Traveller's Case x16 (SKU ST-PT-SET-55_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-07 13:33:52", "user": "cashier", "action": "Selected payment method", "details": "Gcash Only"}
+{"timestamp": "2025-11-07 13:33:58", "user": "cashier", "action": "Simulation timeout cleanup", "details": "Customer 1 lost patience and left before you finished. Their order has been cleared so you can work on the next customer."}
+{"timestamp": "2025-11-07 13:33:58", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 45.0s (Needs Improvement), 36.0% (Needs Attention), receipt no"}
+{"timestamp": "2025-11-07 13:33:58", "user": "cashier", "action": "Checkout cancelled", "details": "GCash payment entry cancelled"}
+{"timestamp": "2025-11-07 13:34:04", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-07 13:34:06", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-07 13:34:08", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P2,595.00, Paid P2,595.00, Change P0.00, Tender: Cash P2,595.00. Items: 50 L Storage Box x1"}
+{"timestamp": "2025-11-07 13:34:09", "user": "cashier", "action": "Simulation feedback", "details": "Customer 2: 10.4s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-07 13:34:11", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-07 13:34:12", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-07 13:34:15", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P2,595.00, Paid P2,595.00, Change P0.00, Tender: Cash P2,595.00. Items: 50 L Storage Box x1"}
+{"timestamp": "2025-11-07 13:34:16", "user": "cashier", "action": "Simulation feedback", "details": "Customer 3: 5.8s (Excellent), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-07 13:34:30", "user": "cashier", "action": "Simulation completed", "details": "3 customers | 69.7s | 12.0% accuracy"}
+{"timestamp": "2025-11-07 13:34:33", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Hard)"}
+{"timestamp": "2025-11-07 13:34:43", "user": "cashier", "action": "Set next item quantity", "details": "4"}
+{"timestamp": "2025-11-07 13:34:56", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x4 (SKU 233_B3T1) [Promo B3T1]"}
+{"timestamp": "2025-11-07 13:34:58", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-07 13:35:00", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P3,300.00, Paid P3,300.00, Change P0.00, Tender: Cash P3,300.00. Items: 19.5L Trash Bin x4"}
+{"timestamp": "2025-11-07 13:35:12", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 26.8s (Good), 0.0% (Needs Attention), receipt yes"}
