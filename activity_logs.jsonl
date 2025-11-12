@@ -769,3 +769,358 @@
 {"timestamp": "2025-11-07 13:34:58", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
 {"timestamp": "2025-11-07 13:35:00", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Total P3,300.00, Paid P3,300.00, Change P0.00, Tender: Cash P3,300.00. Items: 19.5L Trash Bin x4"}
 {"timestamp": "2025-11-07 13:35:12", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 26.8s (Good), 0.0% (Needs Attention), receipt yes"}
+{"timestamp": "2025-11-08 08:05:08", "user": "cashier", "action": "Previewed inventory sync", "details": "92 items compared; 16 not in local catalog"}
+{"timestamp": "2025-11-11 17:07:40", "user": "cashier", "action": "Previewed inventory sync", "details": "90 items compared; 14 not in local catalog"}
+{"timestamp": "2025-11-11 17:08:26", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 17:09:37", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 17:09:46", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:29:16", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:29:20", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:29:26", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 17:29:47", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 17:29:53", "user": "cashier", "action": "Added item to cart", "details": "Ecobag Big x1 (SKU EB-B)"}
+{"timestamp": "2025-11-11 17:29:56", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-11 17:30:00", "user": "cashier", "action": "Completed checkout", "details": "Total P15.00, Paid P15.00, Change P0.00, Tender: Cash P15.00. Items: Ecobag Big x1"}
+{"timestamp": "2025-11-11 17:30:04", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-11 17:30:06", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-11 17:30:06", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-11 17:30:06", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-11 17:30:08", "user": "cashier", "action": "Completed checkout", "details": "Total P865.00, Paid P865.00, Change P0.00, Tender: Cash P865.00. Items: 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-11 17:31:20", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:33:30", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:33:32", "user": "cashier", "action": "Previewed inventory sync", "details": "98 items compared; 22 not in local catalog"}
+{"timestamp": "2025-11-11 17:33:46", "user": "cashier", "action": "Previewed inventory sync", "details": "98 items compared; 22 not in local catalog"}
+{"timestamp": "2025-11-11 17:33:58", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 17:34:28", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:34:52", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:35:09", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 17:35:12", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 17:35:22", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:13:13", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:13:33", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:13:52", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:14:37", "user": "cashier", "action": "Partially cleared sales summary", "details": "Reference OS0027 | Transactions tagged: 0 | Items tagged: 1 | SKUs removed: 1"}
+{"timestamp": "2025-11-11 18:14:54", "user": "cashier", "action": "Posted sales invoice", "details": "Reference OS0027 | Items sent: 1 | Skipped: 1"}
+{"timestamp": "2025-11-11 18:15:08", "user": "cashier", "action": "Exported local-only summary", "details": "Rows: 1 | File: C:/Users/IT/Desktop/s.xlsx"}
+{"timestamp": "2025-11-11 18:16:13", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:16:15", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:16:41", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:23:23", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:23:32", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-11 18:23:34", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-11 18:23:35", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-11 18:23:35", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-11 18:23:37", "user": "cashier", "action": "Completed checkout", "details": "Total P865.00, Paid P865.00, Change P0.00, Tender: Cash P865.00. Items: 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-11 18:23:40", "user": "cashier", "action": "Partially cleared sales summary", "details": "Reference OS0027 | Transactions tagged: 2 | Items tagged: 1 | SKUs removed: 1"}
+{"timestamp": "2025-11-11 18:23:53", "user": "cashier", "action": "Posted sales invoice", "details": "Reference OS0027 | Items sent: 1 | Skipped: 1"}
+{"timestamp": "2025-11-11 18:23:58", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:24:12", "user": "cashier", "action": "Exported local-only summary", "details": "Rows: 1 | File: C:/Users/IT/Desktop/sssss.xlsx"}
+{"timestamp": "2025-11-11 18:24:23", "user": "cashier", "action": "Partially cleared sales summary", "details": "Reference OS0028 | Transactions tagged: 1 | Items tagged: 3 | SKUs removed: 1"}
+{"timestamp": "2025-11-11 18:24:26", "user": "cashier", "action": "Cleared exported items", "details": "Local export | Reference OS0028 | SKUs: 1"}
+{"timestamp": "2025-11-11 18:24:30", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:29:20", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-11 18:29:22", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-11 18:29:23", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:33:17", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:33:18", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109_B1T1) [Promo B1T1]"}
+{"timestamp": "2025-11-12 06:33:22", "user": "cashier", "action": "Voided cart item", "details": "50 L Storage Box x1"}
+{"timestamp": "2025-11-12 06:33:28", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 06:33:32", "user": "cashier", "action": "Added item to cart", "details": "Ecobag Big x1 (SKU EB-B)"}
+{"timestamp": "2025-11-12 06:33:37", "user": "cashier", "action": "Added item to cart", "details": "Ecobag Big x1 (SKU EB-B)"}
+{"timestamp": "2025-11-12 06:33:39", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 06:33:40", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 06:33:40", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 06:33:42", "user": "cashier", "action": "Completed checkout", "details": "Total P895.00, Paid P895.00, Change P0.00, Tender: Cash P895.00. Items: 50 L Storage Box x1; Ecobag Big x1; Ecobag Big x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 06:33:50", "user": "cashier", "action": "Exported sales summary", "details": "Excel | File: C:/Users/IT/Desktop/as.xlsx"}
+{"timestamp": "2025-11-12 06:40:14", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:41:38", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:44:50", "user": "cashier", "action": "Exported sales summary", "details": "Excel | File: C:/Users/IT/Desktop/22.xlsx"}
+{"timestamp": "2025-11-12 06:44:52", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:51:18", "user": "cashier", "action": "Exported sales summary", "details": "PDF | File: C:/Users/IT/Desktop/ssss.pdf"}
+{"timestamp": "2025-11-12 06:54:27", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:55:01", "user": "cashier", "action": "Exported sales summary", "details": "PDF | File: C:/Users/IT/Desktop/ssss.pdf"}
+{"timestamp": "2025-11-12 06:57:30", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 06:57:55", "user": "cashier", "action": "Exported sales summary", "details": "PDF | File: C:/Users/IT/Desktop/ssss.pdf"}
+{"timestamp": "2025-11-12 06:58:36", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 07:06:10", "user": "cashier", "action": "Exported sales summary", "details": "PDF | File: C:/Users/IT/Desktop/ssaa.pdf"}
+{"timestamp": "2025-11-12 07:07:35", "user": "cashier", "action": "Exported sales summary", "details": "PDF | File: C:/Users/IT/Downloads/sAQA.pdf"}
+{"timestamp": "2025-11-12 07:09:15", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 07:09:39", "user": "cashier", "action": "Exported sales summary", "details": "PDF | File: C:/Users/IT/Downloads/sAQA.pdf"}
+{"timestamp": "2025-11-12 07:10:24", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 07:30:31", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 07:36:24", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 07:36:49", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 07:39:33", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 07:53:36", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 07:59:00", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 07:59:01", "user": "cashier", "action": "Added item to cart", "details": "4-seater Table BROWN x1 (SKU 870-BROWN)"}
+{"timestamp": "2025-11-12 07:59:08", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 07:59:29", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 07:59:48", "user": "cashier", "action": "Added item to cart", "details": "22 x1 (SKU 9824)"}
+{"timestamp": "2025-11-12 07:59:52", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 07:59:54", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 07:59:54", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:14:09", "user": "cashier", "action": "Completed checkout", "details": "Total P2,535.00, Paid P2,535.00, Change P0.00, Tender: Cash P2,535.00. Items: Laundry Basket BROWN x1; 4-seater Table BROWN x1; Laundry Basket x1; 22 x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:16:55", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 08:16:56", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket CREAM x1 (SKU 2207-CREAM)"}
+{"timestamp": "2025-11-12 08:16:59", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:17:00", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:17:00", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:17:28", "user": "cashier", "action": "Completed checkout", "details": "Total P740.00, Paid P740.00, Change P0.00, Tender: Cash P740.00. Items: 24.5L Trash Bin x1; Laundry Basket CREAM x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:18:02", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 08:18:03", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Medium x1 (SKU 2501-2)"}
+{"timestamp": "2025-11-12 08:18:05", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:18:47", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 08:18:49", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 08:18:51", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:18:52", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:18:52", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:18:58", "user": "cashier", "action": "Completed checkout", "details": "Total P1,170.00, Paid P1,170.00, Change P0.00, Tender: Cash P1,170.00. Items: 24.5L Trash Bin x1; 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:22:28", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 08:22:30", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:25:09", "user": "cashier", "action": "Completed checkout", "details": "Total P435.00, Paid P435.00, Change P0.00, Tender: Cash P435.00. Items: Laundry Basket BROWN x1"}
+{"timestamp": "2025-11-12 08:25:24", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 08:25:25", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket CREAM x1 (SKU 2207-CREAM)"}
+{"timestamp": "2025-11-12 08:25:26", "user": "cashier", "action": "Added item to cart", "details": "3L EZI Food Keeper x1 (SKU 727)"}
+{"timestamp": "2025-11-12 08:25:28", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:25:29", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:25:29", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:26:30", "user": "cashier", "action": "Completed checkout", "details": "Total P890.00, Paid P890.00, Change P0.00, Tender: Cash P890.00. Items: 24.5L Trash Bin x1; Laundry Basket CREAM x1; 3L EZI Food Keeper x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:26:51", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 08:26:52", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 08:26:55", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 08:26:57", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:26:58", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:26:58", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:31:57", "user": "cashier", "action": "Completed checkout", "details": "Total P1,390.00, Paid P1,390.00, Change P0.00, Tender: Cash P1,390.00. Items: 50 L Storage Box x1; Laundry Basket BROWN x1; Laundry Stool - Small x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:32:12", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 08:32:13", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket CREAM x1 (SKU 2207-CREAM)"}
+{"timestamp": "2025-11-12 08:32:14", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 08:32:15", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Large x1 (SKU 2501-3)"}
+{"timestamp": "2025-11-12 08:32:18", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:32:18", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:32:18", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:34:09", "user": "cashier", "action": "Completed checkout", "details": "Total P755.00, Paid P755.00, Change P0.00, Tender: Cash P755.00. Items: Laundry Stool - Small x1; Laundry Basket CREAM x1; Laundry Stool - Small x1; Laundry Stool - Large x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:34:25", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 08:34:27", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 08:34:28", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 08:34:30", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:34:30", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:34:30", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:35:50", "user": "cashier", "action": "Completed checkout", "details": "Total P1,575.00, Paid P1,575.00, Change P0.00, Tender: Cash P1,575.00. Items: 19.5L Trash Bin x1; Laundry Basket BROWN x1; 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:39:08", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 08:39:09", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 08:39:12", "user": "cashier", "action": "Added item to cart", "details": "Lunch Box x1 (SKU 510)"}
+{"timestamp": "2025-11-12 08:39:14", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:39:14", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:39:14", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:52:48", "user": "cashier", "action": "Completed checkout", "details": "Total P790.00, Paid P790.00, Change P0.00, Tender: Cash P790.00. Items: 19.5L Trash Bin x1; Laundry Basket BROWN x1; Lunch Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:53:46", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 08:53:47", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 08:53:48", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Large x1 (SKU 2501-3)"}
+{"timestamp": "2025-11-12 08:53:51", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 08:53:52", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 08:53:54", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:53:56", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:53:56", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:54:51", "user": "cashier", "action": "Completed checkout", "details": "Total P595.00, Paid P595.00, Change P0.00, Tender: Cash P595.00. Items: Laundry Stool - Small x1; Laundry Stool - Large x1; Laundry Stool - Small x1; 19.5L Trash Bin x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 08:55:34", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 08:55:35", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Medium x1 (SKU 2501-2)"}
+{"timestamp": "2025-11-12 08:55:36", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 08:55:38", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 08:55:39", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 08:55:39", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:00:00", "user": "cashier", "action": "Completed checkout", "details": "Total P1,290.00, Paid P1,290.00, Change P0.00, Tender: Cash P1,290.00. Items: 24.5L Trash Bin x1; Laundry Stool - Medium x1; 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:00:33", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:00:34", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket CREAM x1 (SKU 2207-CREAM)"}
+{"timestamp": "2025-11-12 09:00:34", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Large x1 (SKU 2501-3)"}
+{"timestamp": "2025-11-12 09:00:36", "user": "cashier", "action": "Added item to cart", "details": "Lunch Box x1 (SKU 510)"}
+{"timestamp": "2025-11-12 09:00:38", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:00:39", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:00:39", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:01:00", "user": "cashier", "action": "Completed checkout", "details": "Total P995.00, Paid P995.00, Change P0.00, Tender: Cash P995.00. Items: Laundry Basket x1; Laundry Basket CREAM x1; Laundry Stool - Large x1; Lunch Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:03:29", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 09:03:30", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 09:03:31", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:03:34", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:03:35", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:03:35", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:04:11", "user": "cashier", "action": "Completed checkout", "details": "Total P1,050.00, Paid P1,050.00, Change P0.00, Tender: Cash P1,050.00. Items: Laundry Basket BROWN x1; 19.5L Trash Bin x1; Laundry Basket x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:04:56", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:04:57", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 09:04:58", "user": "cashier", "action": "Added item to cart", "details": "Stainless Steel Spoon & Fork w/ 909 Traveller's Case x1 (SKU ST-PT-SET-55)"}
+{"timestamp": "2025-11-12 09:05:01", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:05:02", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:05:02", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:06:46", "user": "cashier", "action": "Completed checkout", "details": "Total P875.00, Paid P875.00, Change P0.00, Tender: Cash P875.00. Items: Laundry Basket x1; 19.5L Trash Bin x1; Stainless Steel Spoon & Fork w/ 909 Traveller's Case x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:07:18", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 09:07:19", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:07:20", "user": "cashier", "action": "Added item to cart", "details": "1.8L Rectangular EZI Food Keeper x1 (SKU 728)"}
+{"timestamp": "2025-11-12 09:07:23", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:07:24", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:07:24", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:07:46", "user": "cashier", "action": "Completed checkout", "details": "Total P715.00, Paid P715.00, Change P0.00, Tender: Cash P715.00. Items: 19.5L Trash Bin x1; Laundry Basket x1; 1.8L Rectangular EZI Food Keeper x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:08:41", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 09:08:42", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x1 (SKU 339-1)"}
+{"timestamp": "2025-11-12 09:08:43", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x1 (SKU 339-4)"}
+{"timestamp": "2025-11-12 09:08:45", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:08:46", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:08:46", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:14:32", "user": "cashier", "action": "Completed checkout", "details": "Total P710.00, Paid P710.00, Change P0.00, Tender: Cash P710.00. Items: Laundry Basket BROWN x1; Airtight Canister x1; Airtight Canister x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:15:44", "user": "cashier", "action": "Added item to cart", "details": "Pitcher (with twist lock feature) x1 (SKU 2506)"}
+{"timestamp": "2025-11-12 09:15:45", "user": "cashier", "action": "Added item to cart", "details": "Monobloc Square Stool BROWN x1 (SKU 9516-BROWN)"}
+{"timestamp": "2025-11-12 09:15:46", "user": "cashier", "action": "Added item to cart", "details": "Square Bowl - 4pcs per set x1 (SKU 9614)"}
+{"timestamp": "2025-11-12 09:15:48", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:15:49", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:15:49", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:16:56", "user": "cashier", "action": "Completed checkout", "details": "Total P515.00, Paid P515.00, Change P0.00, Tender: Cash P515.00. Items: Pitcher (with twist lock feature) x1; Monobloc Square Stool BROWN x1; Square Bowl - 4pcs per set x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:18:18", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket CREAM x1 (SKU 2207-CREAM)"}
+{"timestamp": "2025-11-12 09:18:19", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 09:18:21", "user": "cashier", "action": "Added item to cart", "details": "1.8L Rectangular EZI Food Keeper x1 (SKU 728)"}
+{"timestamp": "2025-11-12 09:18:23", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:18:24", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:18:24", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:18:40", "user": "cashier", "action": "Completed checkout", "details": "Total P1,400.00, Paid P1,400.00, Change P0.00, Tender: Cash P1,400.00. Items: Laundry Basket CREAM x1; 50 L Storage Box x1; 1.8L Rectangular EZI Food Keeper x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:20:53", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 09:20:54", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 09:20:55", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 09:20:56", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x1 (SKU 339-3)"}
+{"timestamp": "2025-11-12 09:20:58", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:20:58", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:20:58", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:23:44", "user": "cashier", "action": "Completed checkout", "details": "Total P1,400.00, Paid P1,400.00, Change P0.00, Tender: Cash P1,400.00. Items: 50 L Storage Box x1; Laundry Stool - Small x1; 24.5L Trash Bin x1; Airtight Canister x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:25:17", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 09:25:18", "user": "cashier", "action": "Added item to cart", "details": "Christmas set bundle #511,#2336,#9505 x1 (SKU ST-PT-25-CM-01)"}
+{"timestamp": "2025-11-12 09:25:19", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Large x1 (SKU 2501-3)"}
+{"timestamp": "2025-11-12 09:25:22", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:25:23", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:25:23", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:26:21", "user": "cashier", "action": "Completed checkout", "details": "Total P790.00, Paid P790.00, Change P0.00, Tender: Cash P790.00. Items: 19.5L Trash Bin x1; Christmas set bundle #511,#2336,#9505 x1; Laundry Stool - Large x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:27:05", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 09:27:06", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 09:27:08", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:27:10", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:27:11", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:27:11", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:27:46", "user": "cashier", "action": "Completed checkout", "details": "Total P1,050.00, Paid P1,050.00, Change P0.00, Tender: Cash P1,050.00. Items: 19.5L Trash Bin x1; Laundry Basket BROWN x1; Laundry Basket x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:29:44", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 09:29:45", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 09:29:47", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:29:48", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:29:48", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:30:24", "user": "cashier", "action": "Completed checkout", "details": "Total P1,140.00, Paid P1,140.00, Change P0.00, Tender: Cash P1,140.00. Items: 19.5L Trash Bin x1; 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:31:57", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:31:58", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 09:31:59", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 09:32:00", "user": "cashier", "action": "Added item to cart", "details": "Buffet Tray x1 (SKU 714-B)"}
+{"timestamp": "2025-11-12 09:32:01", "user": "cashier", "action": "Added item to cart", "details": "11L Juice Dispenser with FREE Ladle x1 (SKU 9848-S)"}
+{"timestamp": "2025-11-12 09:32:03", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:32:04", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:32:04", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:32:30", "user": "cashier", "action": "Completed checkout", "details": "Total P1,475.00, Paid P1,475.00, Change P0.00, Tender: Cash P1,475.00. Items: Laundry Basket x1; 24.5L Trash Bin x1; Laundry Stool - Small x1; Buffet Tray x1; 11L Juice Dispenser with FREE Ladle x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 09:33:18", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 09:33:19", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 09:33:20", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 09:33:21", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 09:33:25", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 09:33:26", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:33:26", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 09:41:02", "user": "cashier", "action": "Completed checkout", "details": "Total P1,730.00, Paid P1,730.00, Change P0.00, Tender: Cash P1,730.00. Items: Laundry Basket x1; Laundry Stool - Small x1; 50 L Storage Box x1; Laundry Basket BROWN x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 10:00:59", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 10:01:00", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 10:01:01", "user": "cashier", "action": "Added item to cart", "details": "24.5L Trash Bin x1 (SKU 234)"}
+{"timestamp": "2025-11-12 10:01:09", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 10:01:11", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 10:01:11", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 10:01:11", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 10:01:13", "user": "cashier", "action": "Completed checkout", "details": "Total P1,445.00, Paid P1,445.00, Change P0.00, Tender: Cash P1,445.00. Items: 19.5L Trash Bin x1; 50 L Storage Box x1; 24.5L Trash Bin x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 10:01:16", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 10:01:30", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000030   TRANS#: 000030 | Units restored: 4 | Cash -P1,445.00 | GCash -P0.00"}
+{"timestamp": "2025-11-12 10:01:36", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 10:01:38", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket CREAM x1 (SKU 2207-CREAM)"}
+{"timestamp": "2025-11-12 10:01:39", "user": "cashier", "action": "Added item to cart", "details": "19.5L Trash Bin x1 (SKU 233)"}
+{"timestamp": "2025-11-12 10:01:40", "user": "cashier", "action": "Added item to cart", "details": "Laundry Stool - Small x1 (SKU 2501-1)"}
+{"timestamp": "2025-11-12 10:01:43", "user": "cashier", "action": "Checkout cancelled", "details": "Payment method dialog closed"}
+{"timestamp": "2025-11-12 10:01:46", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 10:01:48", "user": "cashier", "action": "Checkout cancelled", "details": "Payment method dialog closed"}
+{"timestamp": "2025-11-12 10:01:49", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 10:01:50", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 10:01:50", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 10:01:53", "user": "cashier", "action": "Completed checkout", "details": "Total P800.00, Paid P800.00, Change P0.00, Tender: Cash P800.00. Items: Laundry Basket CREAM x1; 19.5L Trash Bin x1; Laundry Stool - Small x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 10:01:56", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 10:02:17", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000030   TRANS#: 000030 | Units restored: 4 | Cash -P800.00 | GCash -P0.00"}
+{"timestamp": "2025-11-12 10:02:24", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 10:02:29", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 10:02:35", "user": "cashier", "action": "Added item to cart", "details": "Stainless Steel Spoon & Fork w/ 909 Traveller's Case x1 (SKU ST-PT-SET-55)"}
+{"timestamp": "2025-11-12 10:02:38", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 10:02:41", "user": "cashier", "action": "Completed checkout", "details": "Total P260.00, Paid P260.00, Change P0.00, Tender: Cash P260.00. Items: Stainless Steel Spoon & Fork w/ 909 Traveller's Case x1"}
+{"timestamp": "2025-11-12 10:02:44", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 10:03:00", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000030   TRANS#: 000030 | Units restored: 1 | Cash -P260.00 | GCash -P0.00"}
+{"timestamp": "2025-11-12 10:03:04", "user": "cashier", "action": "Accessed inventory management"}
+{"timestamp": "2025-11-12 10:50:25", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 10:50:28", "user": "cashier", "action": "Voided cart item", "details": "Laundry Basket BROWN x1"}
+{"timestamp": "2025-11-12 10:50:35", "user": "cashier", "action": "Added item to cart", "details": "Christmas set bundle #511,#2336,#9505 x1 (SKU ST-PT-25-CM-01)"}
+{"timestamp": "2025-11-12 10:50:42", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 10:51:30", "user": "cashier", "action": "Completed checkout", "details": "Total P375.00, Paid P375.00, Change P0.00, Tender: Cash P375.00. Items: Christmas set bundle #511,#2336,#9505 x1"}
+{"timestamp": "2025-11-12 10:54:22", "user": "cashier", "action": "Added bundle to cart", "details": "4-Seater Table and 4 Chairs bundle x1 (SKU BNDL-4S) [1x 4-seater Table BROWN, 4x Chair with Armrest BROWN]"}
+{"timestamp": "2025-11-12 10:54:26", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 10:54:27", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 10:54:27", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 11:03:12", "user": "cashier", "action": "Completed checkout", "details": "Total P2,890.00, Paid P2,890.00, Change P0.00, Tender: Cash P2,890.00. Items: 4-Seater Table and 4 Chairs x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 13:27:50", "user": "cashier", "action": "Partially cleared sales summary", "details": "Reference OS0027 | Transactions tagged: 12 | Items tagged: 12 | SKUs removed: 3"}
+{"timestamp": "2025-11-12 13:28:06", "user": "cashier", "action": "Posted sales invoice", "details": "Reference OS0027 | Items sent: 3 | Skipped: 23"}
+{"timestamp": "2025-11-12 13:28:39", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 13:50:52", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 13:50:58", "user": "cashier", "action": "Added item to cart", "details": "Ecobag Big x1 (SKU EB-B)"}
+{"timestamp": "2025-11-12 13:51:02", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 13:51:02", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 13:51:02", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 13:51:04", "user": "cashier", "action": "Completed checkout", "details": "Total P880.00, Paid P880.00, Change P0.00, Tender: Cash P880.00. Items: 50 L Storage Box x1; Ecobag Big x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 13:51:07", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 13:51:38", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000032   TRANS#: 000032 | Units restored: 3 | Cash -P880.00 | GCash -P0.00"}
+{"timestamp": "2025-11-12 13:56:18", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 13:56:23", "user": "cashier", "action": "Added item to cart", "details": "3L EZI Food Keeper x1 (SKU 727)"}
+{"timestamp": "2025-11-12 13:56:26", "user": "cashier", "action": "Added item to cart", "details": "3L EZI Food Keeper x1 (SKU 727)"}
+{"timestamp": "2025-11-12 13:56:29", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 13:56:31", "user": "cashier", "action": "Completed checkout", "details": "Total P300.00, Paid P300.00, Change P0.00, Tender: Cash P300.00. Items: 3L EZI Food Keeper x1; 3L EZI Food Keeper x1"}
+{"timestamp": "2025-11-12 13:56:37", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 13:56:41", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 13:56:45", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 13:56:47", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 13:56:47", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 13:56:47", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 13:56:49", "user": "cashier", "action": "Completed checkout", "details": "Total P1,730.00, Paid P1,730.00, Change P0.00, Tender: Cash P1,730.00. Items: 50 L Storage Box x1; 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 13:56:52", "user": "cashier", "action": "Partially cleared sales summary", "details": "Reference OS0027 | Transactions tagged: 1 | Items tagged: 2 | SKUs removed: 1"}
+{"timestamp": "2025-11-12 14:06:59", "user": "cashier", "action": "Posted sales invoice", "details": "Reference OS0027 | Items sent: 1 | Skipped: 23"}
+{"timestamp": "2025-11-12 14:07:00", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 14:20:23", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 14:20:25", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 14:20:26", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 14:20:29", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 14:20:30", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 14:20:30", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 14:20:32", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251112-7D03F9 | Total P1,730.00, Paid P1,730.00, Change P0.00, Tender: Cash P1,730.00. Items: 50 L Storage Box x1; 50 L Storage Box x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 14:20:36", "user": "cashier", "action": "Partially cleared sales summary (Api Post)", "details": "Reference OS0027 | Transactions tagged: 1 | Items tagged: 2 | SKUs removed: 1"}
+{"timestamp": "2025-11-12 14:20:40", "user": "cashier", "action": "Posted sales invoice", "details": "Reference OS0027 | Items sent: 1 | Skipped: 23"}
+{"timestamp": "2025-11-12 14:20:49", "user": "cashier", "action": "Exported local-only summary", "details": "Rows: 23 | File: C:/Users/IT/Desktop/zx.xlsx"}
+{"timestamp": "2025-11-12 14:21:00", "user": "cashier", "action": "Partially cleared sales summary (Local Export)", "details": "Reference LOCAL-20251112-4E5934 | Transactions tagged: 16 | Items tagged: 98 | SKUs removed: 23"}
+{"timestamp": "2025-11-12 14:21:08", "user": "cashier", "action": "Cleared exported items", "details": "Local export | Reference LOCAL-20251112-4E5934 | SKUs: 23"}
+{"timestamp": "2025-11-12 14:21:25", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 14:25:08", "user": "cashier", "action": "Added item to cart", "details": "50 L Storage Box x1 (SKU 109)"}
+{"timestamp": "2025-11-12 14:25:11", "user": "cashier", "action": "Added item to cart", "details": "Ecobag Big x1 (SKU EB-B)"}
+{"timestamp": "2025-11-12 14:25:13", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 14:25:14", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 14:25:14", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 14:25:16", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251112-34229E | Total P880.00, Paid P880.00, Change P0.00, Tender: Cash P880.00. Items: 50 L Storage Box x1; Ecobag Big x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 14:25:43", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket BROWN x1 (SKU 2207-BROWN)"}
+{"timestamp": "2025-11-12 14:25:45", "user": "cashier", "action": "Added item to cart", "details": "Laundry Basket x1 (SKU 2206-A)"}
+{"timestamp": "2025-11-12 14:25:48", "user": "cashier", "action": "Added item to cart", "details": "Ecobag Big x1 (SKU EB-B)"}
+{"timestamp": "2025-11-12 14:25:50", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-12 14:25:51", "user": "cashier", "action": "Added freebie to cart", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 14:25:51", "user": "cashier", "action": "Awarded basket freebies", "details": "Ecobag Big x1 (FREE)"}
+{"timestamp": "2025-11-12 14:25:52", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251112-8B2C5C | Total P790.00, Paid P790.00, Change P0.00, Tender: Cash P790.00. Items: Laundry Basket BROWN x1; Laundry Basket x1; Ecobag Big x1; Ecobag Big (FREE) x1"}
+{"timestamp": "2025-11-12 14:25:58", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 14:26:21", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000036   TRANS#: 000036 | Units restored: 4 | Cash -P790.00 | GCash -P0.00"}
+{"timestamp": "2025-11-12 14:26:28", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-12 14:26:53", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000035   TRANS#: 000035 | Units restored: 3 | Cash -P880.00 | GCash -P0.00"}
+{"timestamp": "2025-11-12 14:26:56", "user": "cashier", "action": "Viewed sales summary"}

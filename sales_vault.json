@@ -5,16 +5,16 @@
       "revenue": 5220.0
     },
     "2206-A": {
-      "qty_sold": 19,
-      "revenue": 5100.0
+      "qty_sold": 27,
+      "revenue": 7820.0
     },
     "ST-PT-25-CM-09": {
       "qty_sold": 3,
       "revenue": 1005.0
     },
     "727": {
-      "qty_sold": 4,
-      "revenue": 600.0
+      "qty_sold": 7,
+      "revenue": 1050.0
     },
     "EB-S": {
       "qty_sold": 3,
@@ -29,8 +29,8 @@
       "revenue": 520.0
     },
     "339-3": {
-      "qty_sold": 3,
-      "revenue": 420.0
+      "qty_sold": 4,
+      "revenue": 560.0
     },
     "9716- Gray": {
       "qty_sold": 2,
@@ -57,32 +57,381 @@
       "revenue": 35.0
     },
     "109": {
-      "qty_sold": 27,
-      "revenue": 13840.0
+      "qty_sold": 43,
+      "revenue": 26815.0
     },
     "233": {
-      "qty_sold": 4,
-      "revenue": 825.0
+      "qty_sold": 13,
+      "revenue": 3300.0
     },
     "714-B": {
-      "qty_sold": 1,
-      "revenue": 225.0
+      "qty_sold": 2,
+      "revenue": 450.0
     },
     "9718-BROWN": {
-      "qty_sold": 13,
-      "revenue": 5398.305084745763
+      "qty_sold": 17,
+      "revenue": 7031.073446327684
     },
     "870-BROWN": {
-      "qty_sold": 3,
-      "revenue": 3771.694915254237
+      "qty_sold": 5,
+      "revenue": 6568.926553672316
     },
     "2207-BROWN": {
+      "qty_sold": 15,
+      "revenue": 5220.0
+    },
+    "EB-B": {
+      "qty_sold": 3,
+      "revenue": 45.0
+    },
+    "9824": {
+      "qty_sold": 1,
+      "revenue": 220.0
+    },
+    "234": {
       "qty_sold": 6,
-      "revenue": 1305.0
+      "revenue": 1830.0
+    },
+    "2207-CREAM": {
+      "qty_sold": 5,
+      "revenue": 2175.0
+    },
+    "2501-1": {
+      "qty_sold": 8,
+      "revenue": 720.0
+    },
+    "2501-3": {
+      "qty_sold": 4,
+      "revenue": 560.0
+    },
+    "510": {
+      "qty_sold": 2,
+      "revenue": 160.0
+    },
+    "2501-2": {
+      "qty_sold": 1,
+      "revenue": 120.0
+    },
+    "ST-PT-SET-55": {
+      "qty_sold": 1,
+      "revenue": 260.0
+    },
+    "728": {
+      "qty_sold": 2,
+      "revenue": 200.0
+    },
+    "339-1": {
+      "qty_sold": 1,
+      "revenue": 100.0
+    },
+    "339-4": {
+      "qty_sold": 1,
+      "revenue": 175.0
+    },
+    "2506": {
+      "qty_sold": 1,
+      "revenue": 115.0
+    },
+    "9516-BROWN": {
+      "qty_sold": 1,
+      "revenue": 315.0
+    },
+    "9614": {
+      "qty_sold": 1,
+      "revenue": 85.0
+    },
+    "ST-PT-25-CM-01": {
+      "qty_sold": 2,
+      "revenue": 750.0
+    },
+    "9848-S": {
+      "qty_sold": 1,
+      "revenue": 515.0
     }
   },
-  "cash_total": 46430.0,
+  "cash_total": 47295.0,
   "gcash_total": 0.0,
   "period_start": "2025-11-04T10:32:10",
-  "last_saved": "2025-11-07T13:35:14"
+  "last_saved": "2025-11-12T14:37:33",
+  "transactions": {
+    "7d03f9ce3f654beb8f328614c17a952e": {
+      "transaction_uuid": "7d03f9ce3f654beb8f328614c17a952e",
+      "reference_label": "POS-20251112-7D03F9",
+      "sales_key": "SALES#: 000034   TRANS#: 000034",
+      "payment_method": "cash only",
+      "total_amount": 1730.0,
+      "cash_amount": 1730.0,
+      "gcash_amount": 0.0,
+      "line_items": [
+        {
+          "line_id": "7d03f9ce-001",
+          "sku": "109",
+          "name": "50 L Storage Box",
+          "quantity": 1,
+          "unit_price": 865.0,
+          "line_total": 865.0,
+          "is_freebie": false,
+          "status": "api_post",
+          "api_candidate": false,
+          "ref_no": "OS0027",
+          "status_updated_at": "2025-11-12T14:20:36",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:20:36",
+              "reason": "api_post",
+              "ref_no": "OS0027"
+            }
+          ]
+        },
+        {
+          "line_id": "7d03f9ce-002",
+          "sku": "109",
+          "name": "50 L Storage Box",
+          "quantity": 1,
+          "unit_price": 865.0,
+          "line_total": 865.0,
+          "is_freebie": false,
+          "status": "api_post",
+          "api_candidate": false,
+          "ref_no": "OS0027",
+          "status_updated_at": "2025-11-12T14:20:36",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:20:36",
+              "reason": "api_post",
+              "ref_no": "OS0027"
+            }
+          ]
+        },
+        {
+          "line_id": "7d03f9ce-003",
+          "sku": "EB-B",
+          "name": "Ecobag Big",
+          "quantity": 1,
+          "unit_price": 0.0,
+          "line_total": 0.0,
+          "is_freebie": true,
+          "status": "local_export",
+          "api_candidate": false,
+          "ref_no": "LOCAL-20251112-4E5934",
+          "status_updated_at": "2025-11-12T14:21:00",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:21:00",
+              "reason": "local_export",
+              "ref_no": "LOCAL-20251112-4E5934"
+            }
+          ]
+        }
+      ],
+      "day_code": "20251112",
+      "created_at": "2025-11-12T14:20:32",
+      "last_reference": "LOCAL-20251112-4E5934",
+      "last_reference_reason": "local_export",
+      "clear_history": [
+        {
+          "timestamp": "2025-11-12T14:20:36",
+          "reason": "api_post",
+          "ref_no": "OS0027",
+          "skus": [
+            "109"
+          ]
+        },
+        {
+          "timestamp": "2025-11-12T14:21:00",
+          "reason": "local_export",
+          "ref_no": "LOCAL-20251112-4E5934",
+          "skus": [
+            "714-B",
+            "9824",
+            "9516-BROWN",
+            "2506",
+            "EB-B",
+            "2207-CREAM",
+            "2501-2",
+            "234",
+            "9614",
+            "2207-BROWN",
+            "9718-BROWN",
+            "233",
+            "870-BROWN",
+            "339-3",
+            "339-4",
+            "2501-1",
+            "727",
+            "ST-PT-SET-55",
+            "2206-A",
+            "2501-3",
+            "9848-S",
+            "728",
+            "ST-PT-25-CM-01"
+          ]
+        }
+      ],
+      "fully_cleared_at": "2025-11-12T14:21:00"
+    },
+    "34229e77ccd84fabaa5f47098eef8849": {
+      "transaction_uuid": "34229e77ccd84fabaa5f47098eef8849",
+      "reference_label": "POS-20251112-34229E",
+      "sales_key": "SALES#: 000035   TRANS#: 000035",
+      "payment_method": "cash only",
+      "total_amount": 880.0,
+      "cash_amount": 880.0,
+      "gcash_amount": 0.0,
+      "line_items": [
+        {
+          "line_id": "34229e77-001",
+          "sku": "109",
+          "name": "50 L Storage Box",
+          "quantity": 1,
+          "unit_price": 865.0,
+          "line_total": 865.0,
+          "is_freebie": false,
+          "status": "voided",
+          "api_candidate": true,
+          "status_updated_at": "2025-11-12T14:26:52",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:52",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        },
+        {
+          "line_id": "34229e77-002",
+          "sku": "EB-B",
+          "name": "Ecobag Big",
+          "quantity": 1,
+          "unit_price": 15.0,
+          "line_total": 15.0,
+          "is_freebie": false,
+          "status": "voided",
+          "api_candidate": false,
+          "status_updated_at": "2025-11-12T14:26:52",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:52",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        },
+        {
+          "line_id": "34229e77-003",
+          "sku": "EB-B",
+          "name": "Ecobag Big",
+          "quantity": 1,
+          "unit_price": 0.0,
+          "line_total": 0.0,
+          "is_freebie": true,
+          "status": "voided",
+          "api_candidate": false,
+          "status_updated_at": "2025-11-12T14:26:52",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:52",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        }
+      ],
+      "day_code": "20251112",
+      "created_at": "2025-11-12T14:25:16",
+      "voided": true,
+      "voided_at": "2025-11-12T14:26:52"
+    },
+    "8b2c5c9ab25e422ba9c3a0700c9f32ac": {
+      "transaction_uuid": "8b2c5c9ab25e422ba9c3a0700c9f32ac",
+      "reference_label": "POS-20251112-8B2C5C",
+      "sales_key": "SALES#: 000036   TRANS#: 000036",
+      "payment_method": "cash only",
+      "total_amount": 790.0,
+      "cash_amount": 790.0,
+      "gcash_amount": 0.0,
+      "line_items": [
+        {
+          "line_id": "8b2c5c9a-001",
+          "sku": "2207-BROWN",
+          "name": "Laundry Basket BROWN",
+          "quantity": 1,
+          "unit_price": 435.0,
+          "line_total": 435.0,
+          "is_freebie": false,
+          "status": "voided",
+          "api_candidate": false,
+          "status_updated_at": "2025-11-12T14:26:21",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:21",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        },
+        {
+          "line_id": "8b2c5c9a-002",
+          "sku": "2206-A",
+          "name": "Laundry Basket",
+          "quantity": 1,
+          "unit_price": 340.0,
+          "line_total": 340.0,
+          "is_freebie": false,
+          "status": "voided",
+          "api_candidate": false,
+          "status_updated_at": "2025-11-12T14:26:21",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:21",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        },
+        {
+          "line_id": "8b2c5c9a-003",
+          "sku": "EB-B",
+          "name": "Ecobag Big",
+          "quantity": 1,
+          "unit_price": 15.0,
+          "line_total": 15.0,
+          "is_freebie": false,
+          "status": "voided",
+          "api_candidate": false,
+          "status_updated_at": "2025-11-12T14:26:21",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:21",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        },
+        {
+          "line_id": "8b2c5c9a-004",
+          "sku": "EB-B",
+          "name": "Ecobag Big",
+          "quantity": 1,
+          "unit_price": 0.0,
+          "line_total": 0.0,
+          "is_freebie": true,
+          "status": "voided",
+          "api_candidate": false,
+          "status_updated_at": "2025-11-12T14:26:21",
+          "status_history": [
+            {
+              "timestamp": "2025-11-12T14:26:21",
+              "reason": "voided",
+              "ref_no": null
+            }
+          ]
+        }
+      ],
+      "day_code": "20251112",
+      "created_at": "2025-11-12T14:25:52",
+      "voided": true,
+      "voided_at": "2025-11-12T14:26:21"
+    }
+  }
 }

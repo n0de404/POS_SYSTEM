@@ -1,0 +1,21 @@
+{
+  "generated_at": "2025-11-11T17:33:17",
+  "reference": null,
+  "order_reference": null,
+  "items": [
+    {
+      "sku": "EB-B",
+      "remarks": "Ecobag Big",
+      "quantity": 1,
+      "unitPrice": 15.0,
+      "reason": "Not found in API catalog"
+    },
+    {
+      "sku": "109",
+      "remarks": "50 L Storage Box",
+      "quantity": 2,
+      "unitPrice": 432.5,
+      "reason": "Not found in API catalog"
+    }
+  ]
+}
