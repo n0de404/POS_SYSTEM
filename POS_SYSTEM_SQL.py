@@ -14,6 +14,7 @@ import types
 import shutil
 import textwrap
 import random
+import uuid
 from collections import Counter
 try:
     import serial
@@ -47,7 +48,7 @@ from mysql.connector import Error
 from werkzeug.security import check_password_hash, generate_password_hash
 from PIL import Image, ImageQt, ImageOps
 from PyQt6.QtWidgets import (QApplication, QCompleter, QGroupBox, QMainWindow, QTableWidget, QTableWidgetItem, QWidget, QLabel, QLineEdit, QPushButton, QComboBox,
-                             QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QDialog,
+                             QListWidget, QListWidgetItem, QTextEdit, QHBoxLayout, QVBoxLayout, QGridLayout, QFormLayout, QDialog,
                              QMessageBox, QInputDialog, QFileDialog, QScrollArea, QFrame, QSpinBox,
                              QDoubleSpinBox, QDialogButtonBox, QCheckBox, QHeaderView, QToolButton, QAbstractItemView, QMenu)
 from PyQt6.QtGui import QColor, QPixmap, QAction, QActionGroup, QIcon, QFont, QPalette, QPainter, QPen, QBrush, QConicalGradient, QShortcut, QKeySequence
@@ -55,7 +56,7 @@ from PyQt6.QtCore import Qt, QSize, QStringListModel, QPointF, QRectF, QThread, 
 # --- Global Variables ---
 products = {}  # Stores product data from the database: {barcode: [{"name": "...", "price": ..., "stock": ..., "image_filename": "...", "promos": {...}}]}
 product_variant_lookup = {}  # Maps SKU (including promo variants) to lookup data for scanning/searching
-product_variant_aliases = {}  # Maps base stock numbers to their first variant SKU for barcode scanning
+product_id_lookup = {}  # Maps product_id back to (barcode, variant index) for quick reverse lookups
 cart = []  # Stores items currently in the cart
 current_item_count = 1  # Default quantity for next scanned item
 current_discount = 0.0  # Default discount percentage for next scanned item
@@ -72,6 +73,7 @@ bundle_promos = {}  # Stores bundle promos with their component details
 current_theme_preference = "system"
 current_theme_effective = "light"
 basket_promos = []  # Stores basket-size promo tiers
+PRODUCT_CODE_COLUMN_AVAILABLE = None  # Tracks whether products.code exists
 BUNDLE_IMAGE_COLUMN_AVAILABLE = None  # Tracks bundles.image_filename availability
 SALES_REFERENCE_COLUMNS_READY = None  # Tracks presence of ref_no columns on sales tables
 users_data = {}  # Stores usernames and hashed passwords: {username: {"password_hash": "...", "is_admin": bool}}
@@ -92,6 +94,10 @@ sales_summary_vault = {}
 total_cash_tendered_vault = 0.0
 total_gcash_tendered_vault = 0.0
 sales_vault_period_start = None
+transaction_tracking_index = {}
+TRANSACTION_REFERENCE_PREFIX = "POS"
+LOCAL_EXPORT_REFERENCE_PREFIX = "LOCAL"
+REFERENCE_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"
 # Preferred printer for direct receipt printing on Windows; leave blank to use system default.
 CUSTOM_RECEIPT_PRINTER_NAME = "RONGTA 58mm Series Printer"
 # --- API Integration ---
@@ -117,6 +123,7 @@ DEFAULT_API_SETTINGS = {
     "use_sales_stub": True,
     "sales_stub_file": "sales_invoice_stub.json",
 }
+
 api_settings = None
 api_token_cache = None
 def normalize_image_filename(filename):
@@ -210,15 +217,19 @@ PROMO_PRICE_WARNING_SHOWN = False
 UI_PREFERENCES_FILE = "ui_preferences.json"
 # --- New Global Variable for Receipts Archive ---
 receipts_archive = {}  # Stores all generated receipts: {"SALES#_TRANS#": "receipt_text_content"}
-RECEIPT_FONT_NAME = "LucidaConsole"
-FALLBACK_RECEIPT_FONT_NAME = "LucidaConsole"
+RECEIPT_FONT_NAME = "MonospaceTypewriter"
+FALLBACK_RECEIPT_FONT_NAME = "Courier"
+# Try TT Interphases font first, then fall back to MonospaceTypewriter
+RECEIPT_FONT_FILE = os.path.join(BASE_DIR, "TT Interphases Pro Mono Trial Regular.ttf")
+if not os.path.exists(RECEIPT_FONT_FILE):
+    RECEIPT_FONT_FILE = os.path.join(BASE_DIR, "MonospaceTypewriter.ttf")
 RECEIPT_PAGE_WIDTH_MM = 58
 RECEIPT_MARGIN_MM = 0.7
 RECEIPT_TOP_MARGIN_MM = 3
-RECEIPT_BASE_FONT_SIZE = 10
+RECEIPT_BASE_FONT_SIZE = 11
 RECEIPT_BOOTH_SIZE_INCREMENT = 3
 RECEIPT_BOOTH_PREFIX = "Booth #:"
-RECEIPT_MIN_FONT_SIZE = 8
+RECEIPT_MIN_FONT_SIZE = 10
 RECEIPT_PRICE_COLUMN_WIDTH = 10
 RECEIPT_LEFT_COLUMN_TARGET = 24
 RECEIPT_LINE_SPACING_MULTIPLIER = 1.2
@@ -329,6 +340,40 @@ def copy_image_to_library(source_path, prefix, parent=None):
     except Exception as exc:
         show_error("Image Save Error", f"Unable to copy the selected image: {exc}", parent)
         return None
+
+
+def ensure_product_code_column(conn):
+    """
+    Ensures the 'code' column exists on the products table for shorthand lookups.
+    Attempts to add it automatically if it is missing.
+    """
+    global PRODUCT_CODE_COLUMN_AVAILABLE
+    if PRODUCT_CODE_COLUMN_AVAILABLE is not None:
+        return PRODUCT_CODE_COLUMN_AVAILABLE
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW COLUMNS FROM products LIKE 'code'")
+            exists = cursor.fetchone() is not None
+    except Error:
+        PRODUCT_CODE_COLUMN_AVAILABLE = False
+        return False
+    if exists:
+        PRODUCT_CODE_COLUMN_AVAILABLE = True
+        return True
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("ALTER TABLE products ADD COLUMN code VARCHAR(64) NULL")
+        conn.commit()
+        print("Added missing 'code' column to products table.")
+        PRODUCT_CODE_COLUMN_AVAILABLE = True
+        return True
+    except Error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        PRODUCT_CODE_COLUMN_AVAILABLE = False
+        return False
 def ensure_promo_price_column(conn):
     """
     Ensures the product_promotions table has a promo_price column.
@@ -421,7 +466,7 @@ def ensure_bundle_image_column(conn):
 
 def ensure_sales_reference_columns(conn):
     """
-    Ensures the sales_transactions and sales_items tables include a ref_no column.
+    Ensures the sales_transactions and sales_items tables include required tracking columns.
     """
     global SALES_REFERENCE_COLUMNS_READY
     if SALES_REFERENCE_COLUMNS_READY is True:
@@ -432,7 +477,9 @@ def ensure_sales_reference_columns(conn):
             has_transactions_ref = cursor.fetchone() is not None
             cursor.execute("SHOW COLUMNS FROM sales_items LIKE 'ref_no'")
             has_items_ref = cursor.fetchone() is not None
-        if has_transactions_ref and has_items_ref:
+            cursor.execute("SHOW COLUMNS FROM sales_transactions LIKE 'transaction_uuid'")
+            has_transaction_uuid = cursor.fetchone() is not None
+        if has_transactions_ref and has_items_ref and has_transaction_uuid:
             SALES_REFERENCE_COLUMNS_READY = True
             return True
         with conn.cursor() as cursor:
@@ -440,6 +487,8 @@ def ensure_sales_reference_columns(conn):
                 cursor.execute("ALTER TABLE sales_transactions ADD COLUMN ref_no VARCHAR(64) NULL")
             if not has_items_ref:
                 cursor.execute("ALTER TABLE sales_items ADD COLUMN ref_no VARCHAR(64) NULL")
+            if not has_transaction_uuid:
+                cursor.execute("ALTER TABLE sales_transactions ADD COLUMN transaction_uuid VARCHAR(64) NULL")
         conn.commit()
         SALES_REFERENCE_COLUMNS_READY = True
         return True
@@ -453,9 +502,58 @@ def ensure_sales_reference_columns(conn):
         return False
 
 
-def assign_reference_to_sales(ref_no, parent=None):
+def normalize_product_code(value):
+    """
+    Standardize shorthand product codes for consistent storage and searching.
+    """
+    if value is None:
+        return None
+    code = str(value).strip()
+    if not code:
+        return None
+    return code.upper()
+
+
+def render_product_identifier(code, stock_no):
+    """
+    Combine the shorthand code and stock number into a single display token.
+    """
+    normalized_code = normalize_product_code(code)
+    stock_text = str(stock_no or "").strip()
+    if normalized_code and stock_text:
+        return f"{normalized_code}-{stock_text}"
+    return normalized_code or stock_text or ""
+
+
+def sanitize_product_name(name, fallback=""):
+    """
+    Ensure display names never surface literal 'None' and optionally use a fallback.
+    """
+    text = ""
+    if name is not None:
+        text = str(name).strip()
+    if text:
+        return text
+    if fallback is None:
+        return ""
+    return str(fallback).strip()
+
+
+def has_xlsxwriter_support():
+    """
+    Returns True when the optional xlsxwriter dependency is installed.
+    """
+    try:
+        import xlsxwriter  # noqa: F401
+        return True
+    except ModuleNotFoundError:
+        return False
+
+
+def assign_reference_to_sales(ref_no, parent=None, stock_numbers=None):
     """
     Tags unassigned sales records with the provided reference number.
+    When stock_numbers is provided, only matching product stock numbers are updated.
     Returns (success, (transactions_updated, items_updated)).
     """
     ref_no = (ref_no or "").strip()
@@ -465,30 +563,73 @@ def assign_reference_to_sales(ref_no, parent=None):
     conn = get_db_connection(parent)
     if not conn:
         return False, (0, 0)
+    stock_filters = []
+    if stock_numbers:
+        for value in stock_numbers:
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                stock_filters.append(text)
     try:
         if not ensure_sales_reference_columns(conn):
             return False, (0, 0)
+        product_ids = []
+        if stock_filters:
+            placeholders = ", ".join(["%s"] * len(stock_filters))
+            with conn.cursor(dictionary=True) as lookup_cursor:
+                lookup_cursor.execute(
+                    f"SELECT product_id, stock_no FROM products WHERE stock_no IN ({placeholders})",
+                    stock_filters,
+                )
+                rows = lookup_cursor.fetchall()
+            product_ids = [row["product_id"] for row in rows]
+            if not product_ids:
+                return True, (0, 0)
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE sales_transactions
+            item_params = [ref_no]
+            where_clauses = ["(ref_no IS NULL OR ref_no = '')"]
+            if product_ids:
+                product_placeholders = ", ".join(["%s"] * len(product_ids))
+                where_clauses.append(f"product_id IN ({product_placeholders})")
+                item_params.extend(product_ids)
+            items_sql = f"""
+                UPDATE sales_items
                    SET ref_no = %s
-                 WHERE ref_no IS NULL OR ref_no = ''
-                """,
-                (ref_no,),
-            )
-            updated_transactions = cursor.rowcount or 0
-            cursor.execute(
-                """
-                UPDATE sales_items si
-                JOIN sales_transactions st ON si.transaction_id = st.transaction_id
-                   SET si.ref_no = %s
-                 WHERE st.ref_no = %s
-                   AND (si.ref_no IS NULL OR si.ref_no = '')
-                """,
-                (ref_no, ref_no),
-            )
+                 WHERE {' AND '.join(where_clauses)}
+            """
+            cursor.execute(items_sql, item_params)
             updated_items = cursor.rowcount or 0
+            if product_ids:
+                product_placeholders = ", ".join(["%s"] * len(product_ids))
+                transaction_sql = f"""
+                    UPDATE sales_transactions st
+                       SET ref_no = %s
+                     WHERE (st.ref_no IS NULL OR st.ref_no = '')
+                       AND EXISTS (
+                           SELECT 1
+                             FROM sales_items si
+                            WHERE si.transaction_id = st.transaction_id
+                              AND si.product_id IN ({product_placeholders})
+                       )
+                """
+                cursor.execute(transaction_sql, [ref_no, *product_ids])
+            else:
+                cursor.execute(
+                    """
+                    UPDATE sales_transactions st
+                       SET ref_no = %s
+                     WHERE (st.ref_no IS NULL OR st.ref_no = '')
+                       AND NOT EXISTS (
+                           SELECT 1
+                             FROM sales_items si
+                            WHERE si.transaction_id = st.transaction_id
+                              AND (si.ref_no IS NULL OR si.ref_no = '')
+                       )
+                    """,
+                    (ref_no,),
+                )
+            updated_transactions = cursor.rowcount or 0
         conn.commit()
         return True, (updated_transactions, updated_items)
     except Error as exc:
@@ -510,26 +651,27 @@ def assign_reference_to_sales(ref_no, parent=None):
 def get_receipt_font_name():
     """
     Returns the registered font name to use for receipts.
-    Attempts to register Lucida Console from the system fonts and falls back to Courier if unavailable.
+    Prefers the bundled TT Interphases or MonospaceTypewriter font before falling back to Courier.
     """
     try:
         pdfmetrics.getFont(RECEIPT_FONT_NAME)
         return RECEIPT_FONT_NAME
     except KeyError:
-        possible_paths = []
-        windows_dir = os.environ.get("WINDIR")
-        if windows_dir:
-            possible_paths.append(os.path.join(windows_dir, "Fonts", "Lucon.ttf"))
-            possible_paths.append(os.path.join(windows_dir, "Fonts", "lucon.ttf"))
-        possible_paths.append("Lucon.ttf")
-        for candidate in possible_paths:
-            if candidate and os.path.exists(candidate):
-                try:
-                    pdfmetrics.registerFont(TTFont(RECEIPT_FONT_NAME, candidate))
-                    return RECEIPT_FONT_NAME
-                except Exception as exc:
-                    print(f"Warning: failed to register Lucida Console font from '{candidate}': {exc}")
-                    continue
+        pass
+    possible_paths = []
+    if RECEIPT_FONT_FILE and os.path.exists(RECEIPT_FONT_FILE):
+        possible_paths.append(RECEIPT_FONT_FILE)
+    windows_dir = os.environ.get("WINDIR")
+    if windows_dir:
+        possible_paths.append(os.path.join(windows_dir, "Fonts", "MonospaceTypewriter.ttf"))
+    for candidate in possible_paths:
+        if not candidate or not os.path.exists(candidate):
+            continue
+        try:
+            pdfmetrics.registerFont(TTFont(RECEIPT_FONT_NAME, candidate))
+            return RECEIPT_FONT_NAME
+        except Exception as exc:
+            print(f"Warning: failed to register font from '{candidate}': {exc}")
     print("Warning: using Courier font as fallback for receipts.")
     return FALLBACK_RECEIPT_FONT_NAME
 def compute_receipt_layout():
@@ -839,6 +981,8 @@ def render_receipt_text(canvas_obj, receipt_text, layout, start_x, start_y):
         else:
             current_y -= current_line_height
     return current_y
+
+
 def load_admin_password():
     if os.path.exists(ADMIN_PASSWORD_FILE):
         try:
@@ -912,6 +1056,18 @@ def show_info(title, message, parent=None):
     msg.setWindowTitle(title)
     msg.setText(message)
     msg.exec()
+
+
+def promo_quantity_multiplier(promo_code):
+    """Return the quantity multiplier for common promo patterns such as B1T1."""
+    if not promo_code:
+        return 1
+    code = str(promo_code).upper()
+    if "B1T1" in code:
+        return 2
+    if "B3T1" in code:
+        return 4
+    return 1
 def ensure_api_settings_loaded(parent=None):
     """
     Loads the API settings from disk, creating a template if missing.
@@ -1333,11 +1489,15 @@ def load_products_from_database(parent=None):
     if not conn:
         return False
     try:
+        supports_product_codes = ensure_product_code_column(conn)
         supports_promo_prices = ensure_promo_price_column(conn)
         with conn.cursor(dictionary=True) as cursor:
+            select_columns = "product_id, stock_no, name, price, stock, image_filename"
+            if supports_product_codes:
+                select_columns += ", code"
             cursor.execute(
-                """
-                SELECT product_id, stock_no, name, price, stock, image_filename
+                f"""
+                SELECT {select_columns}
                 FROM products
                 ORDER BY stock_no, product_id
                 """
@@ -1386,15 +1546,14 @@ def load_products_from_database(parent=None):
                     normalized_promos[code] = float(row["price"])
                 else:
                     normalized_promos[code] = float(price)
-            variant_sku = f"{barcode}__{row['product_id']}"
             variant_entry = {
                 "name": row["name"],
                 "price": float(row["price"]),
                 "stock": int(row["stock"]),
                 "original_stock": int(row["stock"]),
                 "image_filename": resolve_product_image_filename(barcode, row.get("image_filename")),
+                "code": normalize_product_code(row.get("code")) if supports_product_codes else None,
                 "promos": normalized_promos,
-                "sku": variant_sku,
                 "_product_id": row["product_id"],
             }
             products.setdefault(barcode, []).append(variant_entry)
@@ -1687,34 +1846,33 @@ def rebuild_product_variant_lookup():
     """
     Builds a flat lookup mapping SKU codes (including promo variants) to their base product information.
     """
-    global product_variant_lookup, product_variant_aliases
+    global product_variant_lookup, product_id_lookup
     product_variant_lookup = {}
-    product_variant_aliases = {}
+    product_id_lookup = {}
     for barcode, variants in products.items():
         for index, variant in enumerate(variants):
-            variant_sku = variant.get("sku")
-            if not variant_sku:
-                product_id = variant.get("_product_id")
-                suffix = product_id if product_id is not None else index + 1
-                variant_sku = f"{barcode}__{suffix}"
-                variant["sku"] = variant_sku
+            product_id = variant.get("_product_id")
+            if product_id is not None:
+                try:
+                    product_id_lookup[int(product_id)] = (barcode, index)
+                except (TypeError, ValueError):
+                    pass
             base_entry = {
                 "sku": barcode,
-                "variant_sku": variant_sku,
                 "base_barcode": barcode,
                 "variant_index": index,
                 "promo_code": None,
                 "price": variant['price'],
                 "name": variant['name'],
                 "inventory_usage": 1,
-                "image_filename": variant.get('image_filename', '')
+                "image_filename": variant.get('image_filename', ''),
+                "code": variant.get('code'),
             }
-            product_variant_lookup[variant_sku] = base_entry
-            product_variant_aliases.setdefault(barcode, variant_sku)
+            # Only set the base barcode entry once to preserve the primary lookup
+            product_variant_lookup.setdefault(barcode, base_entry)
             promos = variant.get('promos', {}) or {}
             for promo_code, promo_price in promos.items():
-                variant_suffix = variant_sku
-                promo_sku = f"{variant_suffix}_{promo_code}"
+                promo_sku = f"{barcode}_{promo_code}"
                 inventory_usage = promo_inventory_map.get(promo_code, 1)
                 if promo_code not in promo_inventory_map:
                     print(
@@ -1724,14 +1882,14 @@ def rebuild_product_variant_lookup():
                 promo_price_value = promo_price if promo_price is not None else variant['price']
                 product_variant_lookup[promo_sku] = {
                     "sku": promo_sku,
-                    "variant_sku": variant_sku,
                     "base_barcode": barcode,
                     "variant_index": index,
                     "promo_code": promo_code,
                     "price": promo_price_value,
                     "name": variant['name'],
                     "inventory_usage": inventory_usage,
-                    "image_filename": variant.get('image_filename', '')
+                    "image_filename": variant.get('image_filename', ''),
+                    "code": variant.get('code'),
                 }
     for bundle_code, bundle in bundle_promos.items():
         components = bundle.get("components") or []
@@ -1759,7 +1917,7 @@ def rebuild_product_variant_lookup():
             })
         if not resolved_components:
             continue
-        sku = bundle.get("sku") or f"BUNDLE_{bundle_code}"
+        sku = bundle.get("sku") or bundle_code
         bundle_name = bundle.get("name") or f"Bundle {bundle_code}"
         bundle_price = float(bundle.get("price", 0))
         image_filename = bundle.get("image_filename", "")
@@ -1778,8 +1936,29 @@ def rebuild_product_variant_lookup():
             "inventory_usage": None,
             "image_filename": image_filename,
             "bundle_components": resolved_components,
-            "display_components": display_components
+            "display_components": display_components,
+            "code": None,
         }
+
+
+def locate_variant_by_product_id(product_id):
+    """
+    Return (stock_no, variant_dict, variant_index) for a given product_id if available.
+    """
+    if product_id is None:
+        return None, None, None
+    try:
+        normalized_id = int(product_id)
+    except (TypeError, ValueError):
+        return None, None, None
+    mapping = product_id_lookup.get(normalized_id)
+    if not mapping:
+        return None, None, None
+    barcode, variant_index = mapping
+    variants = products.get(barcode, [])
+    if variant_index is None or variant_index >= len(variants):
+        return barcode, None, variant_index
+    return barcode, variants[variant_index], variant_index
 def save_products_to_database(parent=None):
     """
     Saves the current product data (including updated stock and image filename) to the database.
@@ -1788,20 +1967,36 @@ def save_products_to_database(parent=None):
     if not conn:
         return
     try:
+        supports_product_codes = ensure_product_code_column(conn)
         supports_promo_prices = ensure_promo_price_column(conn)
         with conn.cursor() as cursor:
-            update_query = """
-                UPDATE products
-                   SET name = %s,
-                       price = %s,
-                       stock = %s,
-                       image_filename = %s
-                 WHERE product_id = %s
-            """
-            insert_query = """
-                INSERT INTO products (stock_no, name, price, stock, image_filename)
-                VALUES (%s, %s, %s, %s, %s)
-            """
+            if supports_product_codes:
+                update_query = """
+                    UPDATE products
+                       SET code = %s,
+                           name = %s,
+                           price = %s,
+                           stock = %s,
+                           image_filename = %s
+                     WHERE product_id = %s
+                """
+                insert_query = """
+                    INSERT INTO products (stock_no, code, name, price, stock, image_filename)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """
+            else:
+                update_query = """
+                    UPDATE products
+                       SET name = %s,
+                           price = %s,
+                           stock = %s,
+                           image_filename = %s
+                     WHERE product_id = %s
+                """
+                insert_query = """
+                    INSERT INTO products (stock_no, name, price, stock, image_filename)
+                    VALUES (%s, %s, %s, %s, %s)
+                """
             delete_promos_query = "DELETE FROM product_promotions WHERE product_id = %s"
             if supports_promo_prices:
                 promo_insert_query = """
@@ -1822,16 +2017,30 @@ def save_products_to_database(parent=None):
                     price = float(variant["price"])
                     stock = int(variant["stock"])
                     image_filename = variant.get("image_filename") or None
+                    code_value = normalize_product_code(variant.get("code"))
+                    variant["code"] = code_value
                     if product_id:
-                        cursor.execute(
-                            update_query,
-                            (name, price, stock, image_filename, product_id),
-                        )
+                        if supports_product_codes:
+                            cursor.execute(
+                                update_query,
+                                (code_value, name, price, stock, image_filename, product_id),
+                            )
+                        else:
+                            cursor.execute(
+                                update_query,
+                                (name, price, stock, image_filename, product_id),
+                            )
                     else:
-                        cursor.execute(
-                            insert_query,
-                            (barcode, name, price, stock, image_filename),
-                        )
+                        if supports_product_codes:
+                            cursor.execute(
+                                insert_query,
+                                (barcode, code_value, name, price, stock, image_filename),
+                            )
+                        else:
+                            cursor.execute(
+                                insert_query,
+                                (barcode, name, price, stock, image_filename),
+                            )
                         product_id = cursor.lastrowid
                         variant["_product_id"] = product_id
                     cursor.execute(delete_promos_query, (product_id,))
@@ -2038,7 +2247,7 @@ def ensure_sales_vault_started():
         sales_vault_period_start = datetime.now().isoformat(timespec="seconds")
 def load_sales_vault():
     """Load the persisted sales vault ledger from disk."""
-    global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault, sales_vault_period_start
+    global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault, sales_vault_period_start, transaction_tracking_index
     if not os.path.exists(SALES_VAULT_FILE):
         ensure_sales_vault_started()
         return
@@ -2053,6 +2262,7 @@ def load_sales_vault():
     total_cash_tendered_vault = float(data.get("cash_total", 0.0) or 0.0)
     total_gcash_tendered_vault = float(data.get("gcash_total", 0.0) or 0.0)
     sales_vault_period_start = data.get("period_start") or None
+    transaction_tracking_index = data.get("transactions", {}) or {}
     ensure_sales_vault_started()
 def save_sales_vault():
     """Persist the running vault ledger to disk."""
@@ -2063,6 +2273,7 @@ def save_sales_vault():
         "gcash_total": float(total_gcash_tendered_vault),
         "period_start": sales_vault_period_start,
         "last_saved": datetime.now().isoformat(timespec="seconds"),
+        "transactions": transaction_tracking_index,
     }
     try:
         with open(SALES_VAULT_FILE, "w", encoding="utf-8") as f:
@@ -2071,11 +2282,115 @@ def save_sales_vault():
         print(f"Warning: unable to save sales vault: {exc}")
 def reset_sales_vault(new_start=None):
     """Clear the vault ledger but immediately begin a new period."""
-    global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault, sales_vault_period_start
+    global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault, sales_vault_period_start, transaction_tracking_index
     sales_summary_vault = {}
     total_cash_tendered_vault = 0.0
     total_gcash_tendered_vault = 0.0
     sales_vault_period_start = new_start or datetime.now().isoformat(timespec="seconds")
+    transaction_tracking_index = {}
+    save_sales_vault()
+
+
+def generate_transaction_uuid():
+    """Return a unique identifier for checkout grouping."""
+    return uuid.uuid4().hex
+
+
+def generate_reference_code(prefix=TRANSACTION_REFERENCE_PREFIX, seed=None):
+    """Generate a human-friendly reference that embeds the business prefix and date."""
+    safe_prefix = (prefix or TRANSACTION_REFERENCE_PREFIX or "POS").strip().upper()
+    date_token = datetime.now().strftime("%Y%m%d")
+    if seed:
+        sanitized = str(seed).replace("-", "").strip()
+        random_token = (sanitized[:6] or uuid.uuid4().hex[:6]).upper()
+    else:
+        random_token = uuid.uuid4().hex[:6].upper()
+    return f"{safe_prefix}-{date_token}-{random_token}"
+
+
+def register_transaction_ledger_entry(entry):
+    """Persist a structured record of a completed checkout for later reconciliation."""
+    global transaction_tracking_index
+    if not isinstance(entry, dict):
+        return
+    transaction_uuid = (entry.get("transaction_uuid") or "").strip()
+    if not transaction_uuid:
+        return
+    entry.setdefault("created_at", datetime.now().strftime(REFERENCE_TIMESTAMP_FORMAT))
+    transaction_tracking_index[transaction_uuid] = entry
+    save_sales_vault()
+
+
+def tag_transaction_lines_with_reference(ref_no, target_skus=None, reason="manual"):
+    """
+    Update ledger lines that match the provided SKUs with the supplied reference.
+    Target SKUs of None indicates that the reference applies to every pending line.
+    """
+    if not transaction_tracking_index or not ref_no:
+        return
+    normalized_ref = str(ref_no).strip()
+    if not normalized_ref:
+        return
+    now_ts = datetime.now().strftime(REFERENCE_TIMESTAMP_FORMAT)
+    target_set = {str(sku).strip() for sku in (target_skus or []) if str(sku).strip()}
+    target_set = target_set or None
+    updated_any = False
+    for txn_uuid, txn_data in transaction_tracking_index.items():
+        line_items = txn_data.get("line_items") or []
+        txn_updated = False
+        for line in line_items:
+            sku_text = str(line.get("sku") or "").strip()
+            if target_set is not None and sku_text not in target_set:
+                continue
+            if line.get("status") == "voided":
+                continue
+            line["status"] = reason or "tagged"
+            line["ref_no"] = normalized_ref
+            line["status_updated_at"] = now_ts
+            history = line.setdefault("status_history", [])
+            history.append(
+                {
+                    "timestamp": now_ts,
+                    "reason": reason or "manual",
+                    "ref_no": normalized_ref,
+                }
+            )
+            txn_updated = True
+        if txn_updated:
+            txn_data["last_reference"] = normalized_ref
+            txn_data["last_reference_reason"] = reason or "manual"
+            clear_history = txn_data.setdefault("clear_history", [])
+            clear_history.append(
+                {
+                    "timestamp": now_ts,
+                    "reason": reason or "manual",
+                    "ref_no": normalized_ref,
+                    "skus": list(target_set) if target_set is not None else None,
+                }
+            )
+            txn_data["fully_cleared_at"] = txn_data.get("fully_cleared_at") or (
+                now_ts if all((line.get("status") != "pending") for line in line_items) else None
+            )
+            updated_any = True
+    if updated_any:
+        save_sales_vault()
+
+
+def mark_transaction_voided(transaction_uuid):
+    """Flag ledger entries as voided so they are not mistaken for posted/exported sales."""
+    if not transaction_uuid:
+        return
+    txn = transaction_tracking_index.get(transaction_uuid)
+    if not txn:
+        return
+    now_ts = datetime.now().strftime(REFERENCE_TIMESTAMP_FORMAT)
+    txn["voided"] = True
+    txn["voided_at"] = now_ts
+    for line in txn.get("line_items") or []:
+        line["status"] = "voided"
+        line["status_updated_at"] = now_ts
+        history = line.setdefault("status_history", [])
+        history.append({"timestamp": now_ts, "reason": "voided", "ref_no": line.get("ref_no")})
     save_sales_vault()
 def fetch_highest_sales_identifiers(parent=None):
     """Return the highest sales_no and transaction_no recorded in the database."""
@@ -2086,18 +2401,20 @@ def fetch_highest_sales_identifiers(parent=None):
     max_trans = 0
     try:
         with conn.cursor(dictionary=True) as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    MAX(CAST(sales_no AS UNSIGNED)) AS max_sales_no,
-                    MAX(CAST(transaction_no AS UNSIGNED)) AS max_transaction_no
-                FROM sales_transactions
-                """
-            )
+            cursor.execute("SHOW COLUMNS FROM sales_transactions LIKE 'transaction_no'")
+            has_transaction_column = cursor.fetchone() is not None
+            select_sql = [
+                "SELECT MAX(CAST(sales_no AS UNSIGNED)) AS max_sales_no",
+                ", MAX(CAST(transaction_no AS UNSIGNED)) AS max_transaction_no" if has_transaction_column else ", NULL AS max_transaction_no",
+                " FROM sales_transactions",
+            ]
+            cursor.execute("".join(select_sql))
             row = cursor.fetchone()
             if row:
                 max_sales = int(row.get("max_sales_no") or 0)
                 max_trans = int(row.get("max_transaction_no") or 0)
+                if not has_transaction_column:
+                    max_trans = max_sales
     except Exception as exc:
         print(f"Warning: unable to query sales identifiers: {exc}")
     finally:
@@ -2290,9 +2607,9 @@ class ReceiptDialog(QDialog):
         self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
-        self.print_three_checkbox = QCheckBox("Print 3 copies")
-        self.print_three_checkbox.setToolTip("Default prints 2 copies. Check to print 3 copies.")
-        layout.addWidget(self.print_three_checkbox)
+        self.print_two_checkbox = QCheckBox("Print 2 copies")
+        self.print_two_checkbox.setToolTip("Default prints 1 copy. Check to print 2 copies.")
+        layout.addWidget(self.print_two_checkbox)
         btn_layout = QHBoxLayout()
         layout.addLayout(btn_layout)
         btn_print = QPushButton("Print Receipt")
@@ -2306,10 +2623,15 @@ class ReceiptDialog(QDialog):
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
+        self.reprint_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self.reprint_shortcut.activated.connect(self._handle_reprint_shortcut)
 
     def _handle_print_clicked(self):
-        copies = 3 if self.print_three_checkbox.isChecked() else 2
+        copies = 2 if self.print_two_checkbox.isChecked() else 1
         print_receipt_pdf(self._receipt_text_content, self, copies)
+
+    def _handle_reprint_shortcut(self):
+        print_receipt_pdf(self._receipt_text_content, self, copies=1)
 
     def save_receipt_as_pdf(self, receipt_text_content):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Receipt as PDF", "", "PDF Files (*.pdf)")
@@ -2697,14 +3019,15 @@ class InventoryManagementDialog(QDialog):
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 20, 20, 20)
         card_layout.setSpacing(16)
-        self.inventory_table = QTableWidget(0, 3, card)
-        self.inventory_table.setHorizontalHeaderLabels(["Stock No.", "Product Name", "Stock Left"])
+        self.inventory_table = QTableWidget(0, 4, card)
+        self.inventory_table.setHorizontalHeaderLabels(["Stock No.", "Code", "Product Name", "Stock Left"])
         inventory_header = self.inventory_table.horizontalHeader()
         inventory_header.setStretchLastSection(False)
         inventory_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         inventory_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        inventory_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        inventory_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        inventory_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        inventory_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        inventory_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.inventory_table.setAlternatingRowColors(True)
         self.inventory_table.setWordWrap(False)
         self.inventory_table.setSortingEnabled(True)
@@ -2722,9 +3045,12 @@ class InventoryManagementDialog(QDialog):
         btn_export = QPushButton("Export Summary", self)
         btn_export.clicked.connect(self.export_summary)
         button_grid.addWidget(btn_export, 0, 2)
+        btn_add_product = QPushButton("Add Product", self)
+        btn_add_product.clicked.connect(self.add_new_product)
+        button_grid.addWidget(btn_add_product, 1, 0)
         btn_sync_api = QPushButton("Sync via API", self)
         btn_sync_api.clicked.connect(self.sync_inventory_from_api)
-        button_grid.addWidget(btn_sync_api, 1, 0, 1, 3)
+        button_grid.addWidget(btn_sync_api, 1, 1, 1, 2)
         card_layout.addLayout(button_grid)
         layout.addWidget(card)
         return tab
@@ -2910,20 +3236,186 @@ class InventoryManagementDialog(QDialog):
                 show_info("Replenish Successful", f"Stocks replenished for {replenished_count} products.", self)
             except Exception as e:
                 show_error("Replenish Error", f"Failed to replenish stock from Excel file: {e}", self)
+    def add_new_product(self):
+        next_product_id = self._fetch_next_product_id()
+        if next_product_id is None:
+            next_product_id = self._get_next_product_id()
+        suggested_stock_no = self._suggest_next_stock_number()
+        dialog = AddProductDialog(next_product_id, suggested_stock_no, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        details = dialog.get_values()
+        if not details:
+            return
+        stock_no = str(details["stock_no"]).strip()
+        code_value = normalize_product_code(details.get("code"))
+        name = details["name"].strip()
+        price = float(details["price"])
+        stock_qty = int(details["stock"])
+        if not stock_no:
+            show_error("Missing Stock Number", "Please provide a stock number for the new product.", self)
+            return
+        if not name:
+            show_error("Missing Name", "Please provide a product name.", self)
+            return
+        if stock_no in self.products:
+            show_error(
+                "Duplicate Stock Number",
+                f"The stock number '{stock_no}' is already in use. Please choose a unique value.",
+                self,
+            )
+            return
+        product_id = self._insert_product_record(
+            stock_no,
+            code_value,
+            name,
+            price,
+            stock_qty,
+            preferred_product_id=next_product_id,
+        )
+        if not product_id:
+            return
+        variant = {
+            "name": name,
+            "price": price,
+            "stock": stock_qty,
+            "original_stock": stock_qty,
+            "image_filename": "",
+            "code": code_value,
+            "promos": {},
+            "_product_id": product_id,
+        }
+        self.products.setdefault(stock_no, []).append(variant)
+        global sales_summary
+        sales_summary.setdefault(stock_no, {"qty_sold": 0, "revenue": 0.0})
+        rebuild_product_variant_lookup()
+        self.populate_table()
+        show_info(
+            "Product Added",
+            f"Product '{name}' was added with Product ID {product_id} and initial stock of {stock_qty}.",
+            self,
+        )
+    def _get_next_product_id(self):
+        max_id = 0
+        for variants in self.products.values():
+            for variant in variants:
+                try:
+                    candidate = int(variant.get("_product_id") or 0)
+                except (TypeError, ValueError):
+                    candidate = 0
+                if candidate > max_id:
+                    max_id = candidate
+        return max_id + 1 if max_id else 1
+
+    def _fetch_next_product_id(self):
+        conn = get_db_connection(self)
+        if not conn:
+            return None
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COALESCE(MAX(product_id), 0) + 1 AS next_id FROM products")
+                row = cursor.fetchone()
+                if row:
+                    value = row[0] if not isinstance(row, dict) else row.get("next_id")
+                    return int(value or 1)
+                return 1
+        except Error as exc:
+            show_error("Database Error", f"Unable to determine the next product ID:\n{exc}", self)
+            return None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    def _suggest_next_stock_number(self):
+        numeric_codes = []
+        for code in self.products.keys():
+            text = str(code).strip()
+            if text.isdigit():
+                numeric_codes.append(int(text))
+        if numeric_codes:
+            return str(max(numeric_codes) + 1)
+        return ""
+    def _insert_product_record(self, stock_no, code_value, name, price, stock_qty, preferred_product_id=None):
+        conn = get_db_connection(self)
+        if not conn:
+            return None
+        try:
+            supports_product_codes = ensure_product_code_column(conn)
+            normalized_code = normalize_product_code(code_value)
+            with conn.cursor() as cursor:
+                if preferred_product_id:
+                    if supports_product_codes:
+                        cursor.execute(
+                            """
+                            INSERT INTO products (product_id, stock_no, code, name, price, stock, image_filename)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (preferred_product_id, stock_no, normalized_code, name, price, stock_qty, None),
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            INSERT INTO products (product_id, stock_no, name, price, stock, image_filename)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (preferred_product_id, stock_no, name, price, stock_qty, None),
+                        )
+                    new_id = preferred_product_id
+                else:
+                    if supports_product_codes:
+                        cursor.execute(
+                            """
+                            INSERT INTO products (stock_no, code, name, price, stock, image_filename)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (stock_no, normalized_code, name, price, stock_qty, None),
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            INSERT INTO products (stock_no, name, price, stock, image_filename)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            (stock_no, name, price, stock_qty, None),
+                        )
+                    new_id = cursor.lastrowid
+            conn.commit()
+            return int(new_id)
+        except Error as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            show_error("Add Product Failed", f"Unable to add the new product:\n{exc}", self)
+            return None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
     def populate_table(self):
         if not hasattr(self, "inventory_table"):
             return
         self.inventory_table.setSortingEnabled(False)
         self.inventory_table.setRowCount(0)  # Clear existing rows
-        # Sort products by name
-        sorted_products = sorted(self.products.items(), key=lambda item: item[1][0]["name"].lower())
+        # Sort products by name, but guard against missing values
+        def _inventory_sort_key(entry):
+            variants = entry[1] or []
+            first_variant = variants[0] if variants else {}
+            return sanitize_product_name(first_variant.get("name")).lower()
+
+        sorted_products = sorted(self.products.items(), key=_inventory_sort_key)
         for barcode, variants in sorted_products:
             for variant in variants:
                 row = self.inventory_table.rowCount()
                 self.inventory_table.insertRow(row)
+                code_value = variant.get("code") or ""
                 self.inventory_table.setItem(row, 0, QTableWidgetItem(barcode))
-                self.inventory_table.setItem(row, 1, QTableWidgetItem(variant["name"]))
-                self.inventory_table.setItem(row, 2, QTableWidgetItem(str(variant["stock"])))
+                self.inventory_table.setItem(row, 1, QTableWidgetItem(code_value))
+                name_value = sanitize_product_name(variant.get("name"))
+                self.inventory_table.setItem(row, 2, QTableWidgetItem(name_value))
+                self.inventory_table.setItem(row, 3, QTableWidgetItem(str(variant["stock"])))
         self.inventory_table.setSortingEnabled(True)
         QTimer.singleShot(0, self._autosize_inventory_columns)
     def populate_bundle_table(self):
@@ -3104,18 +3596,23 @@ class InventoryManagementDialog(QDialog):
         if not table:
             return
         table.resizeColumnToContents(0)
-        table.resizeColumnToContents(2)
-        widened = table.columnWidth(0) + 36
-        table.setColumnWidth(0, widened)
+        table.resizeColumnToContents(1)
+        table.resizeColumnToContents(3)
+        stock_width = table.columnWidth(0) + 24
+        code_width = table.columnWidth(1) + 24
+        qty_width = table.columnWidth(3) + 24
+        table.setColumnWidth(0, stock_width)
+        table.setColumnWidth(1, code_width)
+        table.setColumnWidth(3, qty_width)
         viewport_width = table.viewport().width()
         if viewport_width <= 0:
             return
-        padding = 36
-        fixed = table.columnWidth(0) + table.columnWidth(2) + padding
+        padding = 48
+        fixed = stock_width + code_width + qty_width + padding
         available = max(220, viewport_width - fixed)
-        hint = table.sizeHintForColumn(1) + 24
+        hint = table.sizeHintForColumn(2) + 24
         target = max(220, min(hint, available))
-        table.setColumnWidth(1, target)
+        table.setColumnWidth(2, target)
     def _autosize_bundle_columns(self):
         table = getattr(self, "bundle_table", None)
         if not table:
@@ -3463,31 +3960,114 @@ class InventoryManagementDialog(QDialog):
             )
     def export_summary(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Summary as Excel", "", "Excel Files (*.xlsx *.xls)")
-        if file_path:
-            try:
-                rows = []
-                for barcode, variants in self.products.items():
-                    for variant in variants:
-                        starting_stock = variant.get('original_stock', variant.get('stock', 0))  # Use original stock
-                        sold = sales_summary.get(barcode, {}).get('qty_sold', 0)
-                        expected_stock = starting_stock - sold
-                        row_data = {
-                            "Parent": "",
-                            "Category": "",
-                            "Stock No": barcode,
-                            "Name": variant['name'],
-                            "[Z95] - Exibition Warehouse": starting_stock,
-                            "Sold": sold,
-                            "Expected Stocks": expected_stock,
-                            "Available Stocks": variant['stock']
-                        }
-                        rows.append(row_data)
-                columns = ["Parent", "Category", "Stock No", "Name", "[Z95] - Exibition Warehouse", "Sold", "Expected Stocks", "Available Stocks"]
-                df = pd.DataFrame(rows, columns=columns)
-                df.to_excel(file_path, index=False)
-                show_info("Export Successful", "Inventory summary has been exported successfully.", self)
-            except Exception as e:
-                show_error("Export Error", f"Failed to export summary: {e}", self)
+        if not file_path:
+            return
+        try:
+            rows = []
+            for barcode, variants in self.products.items():
+                for variant in variants:
+                    starting_stock = variant.get('original_stock', variant.get('stock', 0))  # Use original stock
+                    sold = sales_summary.get(barcode, {}).get('qty_sold', 0)
+                    expected_stock = starting_stock - sold
+                    code_value = variant.get("code") or ""
+                    row_data = {
+                        "Parent": "",
+                        "Category": "",
+                        "Stock No": barcode,
+                        "Code": code_value,
+                        "Name": variant['name'],
+                        "[Z95] - Exibition Warehouse": starting_stock,
+                        "Sold": sold,
+                        "Expected Stocks": expected_stock,
+                        "Available Stocks": variant['stock']
+                    }
+                    rows.append(row_data)
+            columns = [
+                "Parent",
+                "Category",
+                "Stock No",
+                "Code",
+                "Name",
+                "[Z95] - Exibition Warehouse",
+                "Sold",
+                "Expected Stocks",
+                "Available Stocks",
+            ]
+            df = pd.DataFrame(rows, columns=columns)
+            df.to_excel(file_path, index=False)
+            show_info("Export Successful", "Inventory summary has been exported successfully.", self)
+        except Exception as e:
+            show_error("Export Error", f"Failed to export summary: {e}", self)
+
+
+class AddProductDialog(QDialog):
+    def __init__(self, next_product_id, suggested_stock_no="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Inventory Item")
+        self._result = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+        info = QLabel(f"Next Product ID will be {next_product_id}")
+        info.setObjectName("InventorySubtitle")
+        layout.addWidget(info)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.stock_input = QLineEdit()
+        self.stock_input.setPlaceholderText("Unique stock number / barcode")
+        if suggested_stock_no:
+            self.stock_input.setText(suggested_stock_no)
+        form.addRow("Stock No.", self.stock_input)
+        self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("Shorthand code (optional, e.g., A21)")
+        form.addRow("Code", self.code_input)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Product name")
+        form.addRow("Name", self.name_input)
+        self.price_input = QDoubleSpinBox()
+        self.price_input.setDecimals(2)
+        self.price_input.setMinimum(0.0)
+        self.price_input.setMaximum(9_999_999.99)
+        self.price_input.setPrefix("P")
+        form.addRow("Price", self.price_input)
+        self.quantity_spin = QSpinBox()
+        self.quantity_spin.setRange(0, 1_000_000)
+        form.addRow("Stock Qty", self.quantity_spin)
+        layout.addLayout(form)
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        save_btn = button_box.button(QDialogButtonBox.StandardButton.Save)
+        save_btn.setText("Add Product")
+        button_box.accepted.connect(self._handle_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _handle_accept(self):
+        stock_no = self.stock_input.text().strip()
+        code_value = normalize_product_code(self.code_input.text())
+        name = self.name_input.text().strip()
+        price = float(self.price_input.value())
+        stock_qty = int(self.quantity_spin.value())
+        if not stock_no:
+            show_error("Missing Stock Number", "Stock number is required.", self)
+            return
+        if not name:
+            show_error("Missing Product Name", "Product name is required.", self)
+            return
+        self._result = {
+            "stock_no": stock_no,
+            "code": code_value,
+            "name": name,
+            "price": price,
+            "stock": stock_qty,
+        }
+        self.accept()
+
+    def get_values(self):
+        return self._result
+
+
 class PromoManagementDialog(QDialog):
     def __init__(self, products_ref, parent=None):
         super().__init__(parent)
@@ -3767,7 +4347,7 @@ class BundlePromoDialog(QDialog):
         controls_col = QVBoxLayout()
         self.bundle_image_file_label = QLabel("No image selected")
         controls_col.addWidget(self.bundle_image_file_label)
-        self.btn_select_bundle_image = QPushButton("Choose Imageâ€¦")
+        self.btn_select_bundle_image = QPushButton("Choose Image")
         self.btn_select_bundle_image.clicked.connect(self.choose_bundle_image)
         controls_col.addWidget(self.btn_select_bundle_image)
         image_row.addLayout(controls_col)
@@ -4005,7 +4585,7 @@ class BundlePromoDialog(QDialog):
             show_error("Validation Error", "Bundle price must be greater than zero.", self)
             return
         bundle_name = self.bundle_name_edit.text().strip() or f"Bundle {bundle_code}"
-        sku = f"BUNDLE_{bundle_code}"
+        sku = bundle_code
         image_filename = self.bundle_image_filename or ""
         if self.bundle_image_source_path:
             new_filename = copy_image_to_library(self.bundle_image_source_path, f"bundle_{bundle_code}", self)
@@ -4428,8 +5008,14 @@ class StickyNoteWidget(QFrame):
             name = entry.get("name") or entry.get("stock_no") or "Item"
             stock = entry.get("stock_no") or ""
             qty = entry.get("qty", 1)
-            price = entry.get("price", 0)
-            lines.append(f"- {name} ({stock}) x{qty} @ P{price:,.2f}")
+            code_value = normalize_product_code(entry.get("code"))
+            parts = [f"- x{qty}"]
+            if code_value:
+                parts.append(f"[{code_value}]")
+            parts.append(name)
+            if stock:
+                parts.append(f"({stock})")
+            lines.append(" ".join(part for part in parts if part))
         method = payment.get("method", "").title()
         lines.append("")
         lines.append("Payment:")
@@ -4583,6 +5169,7 @@ class CustomerSimulationManager:
         self.progress_timer.timeout.connect(self._update_time_progress_visual)
         self.customer_deadline = None
         self.customer_total_count = 0
+        self.active_checkout_token = None
         if self.main_window is not None:
             try:
                 self.main_window.destroyed.connect(self.note.close)
@@ -4600,6 +5187,7 @@ class CustomerSimulationManager:
         self.time_limit_seconds = None
         self.customer_deadline = None
         self.customer_total_count = 0
+        self.active_checkout_token = None
         if hasattr(self, "timeout_timer") and self.timeout_timer:
             self.timeout_timer.stop()
         if hasattr(self, "progress_timer") and self.progress_timer:
@@ -4731,7 +5319,7 @@ class CustomerSimulationManager:
             if price_value <= 0:
                 continue
             seen_skus.add(sku)
-            promo_multiplier = self._promo_quantity_multiplier(promo_code)
+            promo_multiplier = promo_quantity_multiplier(promo_code)
             items.append(
                 {
                     "sku": sku,
@@ -4745,19 +5333,10 @@ class CustomerSimulationManager:
                     "is_bundle": bool(bundle_components),
                     "promo_code": promo_code,
                     "promo_multiplier": promo_multiplier,
+                    "code": data.get("code"),
                 }
             )
         return items
-
-    def _promo_quantity_multiplier(self, promo_code):
-        if not promo_code:
-            return 1
-        code = str(promo_code).upper()
-        if "B1T1" in code:
-            return 2
-        if "B3T1" in code:
-            return 4
-        return 1
 
     def _build_scenarios(self, count):
         settings = self.DIFFICULTY_SETTINGS.get(self.difficulty, self.DIFFICULTY_SETTINGS["easy"])
@@ -4801,6 +5380,7 @@ class CustomerSimulationManager:
                         "is_bundle": choice.get("is_bundle", False),
                         "promo_code": choice.get("promo_code"),
                         "promo_multiplier": choice.get("promo_multiplier", 1),
+                        "code": choice.get("code"),
                     },
                 )
                 base_qty = random.randint(settings["qty_min"], settings["qty_max"])
@@ -4880,8 +5460,12 @@ class CustomerSimulationManager:
             return
         self.current_index = index
         self.customer_start_time = time.perf_counter()
+        self.active_checkout_token = time.perf_counter_ns()
         self._update_sticky_note(self.scenarios[index], index + 1, announce=announce)
         self._start_customer_timer()
+
+    def get_active_checkout_token(self):
+        return self.active_checkout_token
 
     def _update_sticky_note(self, scenario, number, announce=False):
         if not self.note:
@@ -4955,6 +5539,8 @@ class CustomerSimulationManager:
         receipt_text_content,
         cash_amount,
         gcash_amount,
+        *,
+        checkout_token=None,
     ):
         self.timeout_timer.stop()
         if self.progress_timer:
@@ -4963,6 +5549,9 @@ class CustomerSimulationManager:
             return
         if self.current_index >= len(self.scenarios):
             return
+        if checkout_token is not None:
+            if self.active_checkout_token is None or checkout_token != self.active_checkout_token:
+                return
         self._finalize_customer(
             cart_snapshot,
             total,
@@ -4980,6 +5569,12 @@ class CustomerSimulationManager:
             return
         if self.progress_timer:
             self.progress_timer.stop()
+        if hasattr(self.main_window, "handle_simulation_timeout_abort"):
+            message = (
+                f"Customer {self.current_index + 1} lost patience and left before you finished."
+                " Their order has been cleared so you can work on the next customer."
+            )
+            self.main_window.handle_simulation_timeout_abort(message)
         scenario = self.scenarios[self.current_index]
         cart_snapshot = [deepcopy(entry) for entry in getattr(self.main_window, "cart", [])]
         if hasattr(self.main_window, "cart"):
@@ -5017,6 +5612,7 @@ class CustomerSimulationManager:
         if self.progress_timer:
             self.progress_timer.stop()
         self.customer_deadline = None
+        self.active_checkout_token = None
         if self.note:
             self.note.set_time_progress(None, None)
         scenario = self.scenarios[self.current_index]
@@ -5096,12 +5692,15 @@ class CustomerSimulationManager:
             sum(entry["accuracy"] for entry in self.results) / total_customers if total_customers else 0.0
         )
         collected_issues = [issue for entry in self.results for issue in entry["issues"]]
-        if average_accuracy >= 0.97 and not collected_issues:
-            performance_banner = "Outstanding you are good at this!"
-        elif average_accuracy >= 0.8:
-            performance_banner = "Not bad for a beginner"
+        score_value, score_label = self._compute_overall_score(average_accuracy, average_time)
+        if score_value >= 95:
+            performance_banner = "Outstanding — you are good at this!"
+        elif score_value >= 80:
+            performance_banner = "Great hustle! Keep it up."
+        elif score_value >= 65:
+            performance_banner = "Not bad for a beginner."
         else:
-            performance_banner = "You are the worst cashier!"
+            performance_banner = "Needs more practice — keep training!"
         summary_lines = [
             performance_banner,
             "",
@@ -5109,20 +5708,15 @@ class CustomerSimulationManager:
             f"Customers served: {total_customers}",
             f"Total time: {total_time:.1f}s (avg {average_time:.1f}s per customer)",
             f"Average accuracy: {average_accuracy * 100:.1f}%",
+            f"Score: {score_value}/100 ({score_label})",
         ]
         if collected_issues:
-            summary_lines.append("")
-            summary_lines.append("Things to review next time:")
-            unique_issues = []
-            seen_issues = set()
-            for item in collected_issues:
-                normalized = item.strip().lower()
-                if normalized in seen_issues:
-                    continue
-                seen_issues.add(normalized)
-                unique_issues.append(item.strip())
-            for issue in unique_issues:
-                summary_lines.append(f"- {issue}")
+            translated_feedback = self._translate_issue_feedback(collected_issues)
+            if translated_feedback:
+                summary_lines.append("")
+                summary_lines.append("Things to review next time:")
+                for entry in translated_feedback:
+                    summary_lines.append(f"- {entry}")
         else:
             summary_lines.append("No discrepancies were detected - excellent job!")
         QMessageBox.information(
@@ -5287,6 +5881,74 @@ class CustomerSimulationManager:
             return "Good"
         return "Needs Improvement"
 
+    def _compute_overall_score(self, average_accuracy, average_time):
+        accuracy_component = max(0.0, min(1.0, average_accuracy or 0.0))
+        reference_time = self.time_limit_seconds or self.SPEED_THRESHOLDS[-1]
+        if reference_time is None or reference_time <= 0:
+            reference_time = 60.0
+        if average_time <= 0:
+            speed_component = 1.0
+        else:
+            speed_component = max(0.0, min(1.0, reference_time / max(average_time, 1e-3)))
+        score_value = round((accuracy_component * 0.7 + speed_component * 0.3) * 100)
+        if score_value >= 95:
+            label = "Outstanding"
+        elif score_value >= 85:
+            label = "Great"
+        elif score_value >= 70:
+            label = "Solid"
+        elif score_value >= 55:
+            label = "Needs Practice"
+        else:
+            label = "Critical"
+        return score_value, label
+
+    def _translate_issue_feedback(self, issues):
+        if not issues:
+            return ["No discrepancies were detected - excellent job!"]
+        cleaned = [issue.strip() for issue in issues if issue and issue.strip()]
+        lowered = [entry.lower() for entry in cleaned]
+        messages = []
+        if any(text.startswith("missing ") for text in lowered):
+            messages.append("Accuracy drill: double-check the product codes you type before confirming the cart.")
+        if any(text.startswith("unexpected ") for text in lowered):
+            messages.append("Cart review: remove unintended items before you hit checkout.")
+        if any("time limit" in text for text in lowered):
+            messages.append("Speed focus: tighten your workflow so each customer finishes before the timer.")
+        if any("receipt" in text for text in lowered):
+            messages.append("Customer care: always hand or print the receipt to close the sale.")
+        if any(text.startswith("payment") for text in lowered):
+            messages.append("Payment accuracy: match the expected tender and change amounts more carefully.")
+        if any("cash tender" in text for text in lowered):
+            messages.append("Cash handling: enter the exact cash amount the customer provides.")
+        if any("gcash tender" in text for text in lowered):
+            messages.append("GCash handling: verify the GCash transfer matches the expected value before confirming.")
+        if any("total tender" in text for text in lowered):
+            messages.append("Tender balance: ensure the combined cash + GCash equals the required total.")
+        if any("change should" in text for text in lowered):
+            messages.append("Change accuracy: double-check your math before handing back change.")
+        categorized_keywords = (
+            "missing ",
+            "unexpected ",
+            "time limit",
+            "receipt",
+            "payment",
+            "cash tender",
+            "gcash tender",
+            "total tender",
+            "change should",
+        )
+        seen = set()
+        for original, low in zip(cleaned, lowered):
+            if low in seen:
+                continue
+            seen.add(low)
+            if not any(keyword in low for keyword in categorized_keywords):
+                messages.append(original)
+        if not messages:
+            messages.append("Keep practicing to smooth out the rough spots.")
+        return messages
+
 
 class POSMainWindow(QMainWindow):
     def __init__(self, username, parent=None):
@@ -5309,6 +5971,8 @@ class POSMainWindow(QMainWindow):
         self.btn_add_customer = None
         self.customer_tab_shortcuts = []
         self.customer_name_counter = 1
+        self._active_payment_dialog = None
+        self._active_receipt_dialog = None
         self.current_item_count = current_item_count
         self.current_discount = current_discount
         self.products = products  # Make sure this is accessibl
@@ -5322,6 +5986,7 @@ class POSMainWindow(QMainWindow):
         self.current_display_bundle_code = None
         self.scanner_worker = None
         self.activity_logs = load_activity_logs()
+        self._api_catalog_cache = None
         ensure_sales_vault_started()
         self.simulation_manager = CustomerSimulationManager(self)
         self.init_ui()
@@ -5340,6 +6005,127 @@ class POSMainWindow(QMainWindow):
             entry["details"] = details
         self.activity_logs.append(entry)
         append_activity_log_entry(entry)
+
+    def _deduct_tender_totals_for_revenue(self, revenue_amount):
+        """
+        Reduce cash / gcash tendered totals proportionally to the provided revenue amount.
+        Keeps values non-negative and persists the updated totals.
+        """
+        global total_cash_tendered, total_gcash_tendered
+        global total_cash_tendered_vault, total_gcash_tendered_vault
+        amount = float(revenue_amount or 0.0)
+        if amount <= 0:
+            return
+        cash_available = max(0.0, float(total_cash_tendered))
+        gcash_available = max(0.0, float(total_gcash_tendered))
+        combined = cash_available + gcash_available
+        if combined <= 0:
+            return
+        cash_ratio = cash_available / combined if combined else 0.0
+        gcash_ratio = gcash_available / combined if combined else 0.0
+        cash_deduction = min(cash_available, amount * cash_ratio)
+        gcash_deduction = min(gcash_available, amount * gcash_ratio)
+        remainder = amount - (cash_deduction + gcash_deduction)
+        if remainder > 0:
+            cash_remainder = cash_available - cash_deduction
+            extra_cash = min(cash_remainder, remainder)
+            cash_deduction += extra_cash
+            remainder -= extra_cash
+        if remainder > 0:
+            gcash_remainder = gcash_available - gcash_deduction
+            gcash_deduction += min(gcash_remainder, remainder)
+        total_cash_tendered = max(0.0, cash_available - cash_deduction)
+        total_gcash_tendered = max(0.0, gcash_available - gcash_deduction)
+        total_cash_tendered_vault = max(0.0, float(total_cash_tendered_vault) - cash_deduction)
+        total_gcash_tendered_vault = max(0.0, float(total_gcash_tendered_vault) - gcash_deduction)
+        save_tendered_amounts()
+
+    def get_api_catalog_skus(self, parent_widget=None, force_refresh=False):
+        """
+        Returns a cached set of SKUs that exist on the remote API inventory.
+        Fetches fresh data when forced or when the cache is stale.
+        """
+        widget = parent_widget or self
+        if not ensure_api_settings_loaded(widget):
+            return None
+        cache_entry = getattr(self, "_api_catalog_cache", None)
+        if (
+            not force_refresh
+            and cache_entry
+            and isinstance(cache_entry, dict)
+            and cache_entry.get("fetched_at")
+            and datetime.now() - cache_entry["fetched_at"] < timedelta(minutes=15)
+        ):
+            return cache_entry.get("skus", set())
+        payload = fetch_inventory_payload(widget)
+        if payload is None:
+            return None
+        if payload.get("code") not in (200, 201):
+            message = payload.get("message") or payload.get("error") or json.dumps(payload)
+            show_error(
+                "Inventory Lookup Failed",
+                f"Inventory endpoint responded with code {payload.get('code')}: \n{message}",
+                widget,
+            )
+            return None
+        items = ((payload.get("data") or {}).get("items") or [])
+        sku_set = set()
+        for entry in items:
+            sku = str(entry.get("sku") or "").strip()
+            if sku:
+                sku_set.add(sku)
+        self._api_catalog_cache = {
+            "skus": sku_set,
+            "fetched_at": datetime.now(),
+        }
+        return sku_set
+
+    def _clear_tracked_dialog(self, attr_name, *args):
+        setattr(self, attr_name, None)
+
+    def _track_modal_dialog(self, dialog, attr_name):
+        if dialog is None:
+            return dialog
+        setattr(self, attr_name, dialog)
+        try:
+            dialog.finished.connect(partial(self._clear_tracked_dialog, attr_name))
+        except Exception:
+            pass
+        return dialog
+
+    def _close_tracked_dialog(self, attr_name):
+        dialog = getattr(self, attr_name, None)
+        if dialog is None:
+            return False
+        try:
+            dialog.reject()
+        except Exception:
+            try:
+                dialog.close()
+            except Exception:
+                pass
+        setattr(self, attr_name, None)
+        return True
+
+    def handle_simulation_timeout_abort(self, message):
+        closed_any = False
+        for attr in ("_active_payment_dialog", "_active_receipt_dialog"):
+            closed_any = self._close_tracked_dialog(attr) or closed_any
+        app = QApplication.instance()
+        modal = app.activeModalWidget() if app else None
+        if modal and modal is not self and modal.isVisible():
+            try:
+                modal.reject()
+            except Exception:
+                try:
+                    modal.close()
+                except Exception:
+                    pass
+            closed_any = True
+        if message:
+            show_warning("Simulation Timeout", message, self)
+        if closed_any:
+            self.log_user_action("Simulation timeout cleanup", message or "Closed blocking dialogs")
     def _apply_next_item_quantity(self, quantity, *, log_message=None, status_message=None):
         """Update the next item quantity tracked by the POS."""
         global current_item_count
@@ -5493,7 +6279,7 @@ class POSMainWindow(QMainWindow):
         self.label_product_stock_display = QLabel("STOCK: ")
         self.label_product_stock_display.setFont(QFont("Arial", 15))
         info_layout.addWidget(self.label_product_stock_display, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.label_product_barcode_number = QLabel("STOCK NO.: ")
+        self.label_product_barcode_number = QLabel("CODE/STOCK: ")
         self.label_product_barcode_number.setFont(QFont("Arial", 15))
         info_layout.addWidget(self.label_product_barcode_number, alignment=Qt.AlignmentFlag.AlignLeft)
         # Set the layout for the info group and add it to the main product display frame
@@ -5531,6 +6317,11 @@ class POSMainWindow(QMainWindow):
         self.quantity_shortcut_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.quantity_shortcut_action.triggered.connect(self.set_item_count)
         self.addAction(self.quantity_shortcut_action)
+        self.product_search_shortcut_action = QAction("Focus Product Search", self)
+        self.product_search_shortcut_action.setShortcut(QKeySequence("Ctrl+S"))
+        self.product_search_shortcut_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.product_search_shortcut_action.triggered.connect(self.focus_product_search_box)
+        self.addAction(self.product_search_shortcut_action)
         # If desired, add empty stretch or spacer to fill the last grid cell (row=2, col=1)
         # Set the layout for the info group and add it to the main layout
         # Add the grid layout directly to the product_display_frame, below the info_group
@@ -5725,7 +6516,8 @@ class POSMainWindow(QMainWindow):
         self.clear_product_display()
     def format_cart_item_label(self, item):
         sku = item.get("Stock No.", "")
-        name = item.get("name", "")
+        identifier = render_product_identifier(item.get("code"), sku) or sku
+        name_text = sanitize_product_name(item.get("name"))
         qty = item.get("qty", 1)
         inventory_usage = item.get("inventory_usage", 1) or 1
         display_qty = qty * inventory_usage
@@ -5733,7 +6525,15 @@ class POSMainWindow(QMainWindow):
             display_qty = int(display_qty)
         line_total = item.get("price", 0) * qty
         suffix = " (Bundle)" if item.get("bundle_components") else ""
-        return f"{sku} - {name}{suffix} x{display_qty} - P{line_total:.2f}"
+        if suffix and not name_text:
+            name_segment = suffix.strip()
+        else:
+            name_segment = f"{name_text}{suffix}".strip()
+        descriptor_parts = [part for part in (identifier, name_segment) if part]
+        descriptor = " ".join(descriptor_parts).strip() or (identifier or name_segment or "Item")
+        total_display = "FREE" if item.get("is_freebie") else f"P{line_total:.2f}"
+        price_segment = f"- {total_display}" if total_display else ""
+        return f"{descriptor} x{display_qty} {price_segment}".strip()
     def handle_session_after_checkout(self):
         if self.customer_tabs is None or not self.customer_sessions:
             return
@@ -5787,7 +6587,9 @@ class POSMainWindow(QMainWindow):
             self.label_product_name_display.setText(f"Name: {item['name']}")
             self.label_product_price_display.setText(f"Price: P{item['price']:.2f}")
             self.label_product_stock_display.setText(f"Stock: {variant['stock']}")
-            self.label_product_barcode_number.setText(f"Stock No.: {sku}")
+            identifier = render_product_identifier(item.get("code"), sku)
+            display_identifier = identifier or (sku or "")
+            self.label_product_barcode_number.setText(f"Code/Stock: {display_identifier}")
             self.display_product_image(variant.get('image_filename'), sku)
             self.set_display_context(base_barcode, variant_index, item.get('bundle_code'))
         else:
@@ -5851,6 +6653,12 @@ class POSMainWindow(QMainWindow):
         # Update total
         self.update_total()
         show_info("Item Voided", f"'{voided_item['name']}' has been removed from the cart.", self)
+    def _build_product_search_display(self, sku, data):
+        identifier = render_product_identifier(data.get("code"), sku)
+        if identifier:
+            return f"{identifier} {data['name']} ({sku})"
+        return f"{data['name']} ({sku})"
+
     def setup_product_search_combobox(self):
         # Initial setup for the combobox to be editable with styling and completer
         self.entry_product_search.setEditable(True)
@@ -5860,7 +6668,7 @@ class POSMainWindow(QMainWindow):
         self.apply_combobox_style(self.current_effective_theme)
         # Store full product list as display strings: "Product Name (barcode)"
         self._product_search_list = [
-            f"{data['name']} ({sku})" for sku, data in product_variant_lookup.items()
+            self._build_product_search_display(sku, data) for sku, data in product_variant_lookup.items()
         ]
         self.entry_product_search.clear()
         self.entry_product_search.addItems(self._product_search_list)
@@ -5883,25 +6691,68 @@ class POSMainWindow(QMainWindow):
             # Show no completions when empty to avoid list show
             self._completer_model.setStringList([])
             return
-        filtered = []
+        matches = []
+
+        def evaluate_match(field_text, base_priority):
+            if not field_text:
+                return None
+            idx = field_text.find(text_lower)
+            if idx == -1:
+                return None
+            # Prefix matches have higher priority than contains matches
+            prefix_bucket = 0 if idx == 0 else 3
+            return (base_priority + prefix_bucket, idx, len(field_text))
+
         for sku, data in product_variant_lookup.items():
-            display_text = f"{data['name']} ({sku})"
-            if text_lower in data['name'].lower() or text_lower in sku.lower():
-                filtered.append(display_text)
+            data = data or {}
+            display_text = self._build_product_search_display(sku, data)
+            name_value = (data.get('name') or "").lower()
+            code_value = (data.get('code') or "").lower()
+            sku_value = str(sku or "").lower()
+            ranking_candidates = [
+                evaluate_match(name_value, 0),
+                evaluate_match(code_value, 1),
+                evaluate_match(sku_value, 2),
+            ]
+            ranking_candidates = [candidate for candidate in ranking_candidates if candidate is not None]
+            if not ranking_candidates:
+                continue
+            best_rank = min(ranking_candidates)
+            matches.append((best_rank, display_text))
+        matches.sort(key=lambda entry: (entry[0][0], entry[0][1], entry[0][2], entry[1].lower()))
+        filtered = [entry[1] for entry in matches]
         self._completer_model.setStringList(filtered)
     def setup_product_search_signals(self):
         self._search_selection_in_progress = False
         self._completer.activated.connect(self.on_product_search_selected)
-        self.entry_product_search.activated.connect(self.on_product_search_index_selected)
-    def on_product_search_index_selected(self, index):
-        if index < 0 or getattr(self, "_search_selection_in_progress", False):
+        line_edit = self.entry_product_search.lineEdit()
+        line_edit.returnPressed.connect(self.on_product_search_return_pressed)
+        dropdown_view = self.entry_product_search.view()
+        dropdown_view.clicked.connect(self.on_product_search_dropdown_index_triggered)
+        dropdown_view.activated.connect(self.on_product_search_dropdown_index_triggered)
+
+    def on_product_search_return_pressed(self):
+        if getattr(self, "_search_selection_in_progress", False):
             return
-        self.on_product_search_selected(self.entry_product_search.itemText(index))
+        text = self.entry_product_search.currentText().strip()
+        if not text:
+            return
+        self.on_product_search_selected(text)
+
+    def on_product_search_dropdown_index_triggered(self, model_index):
+        if getattr(self, "_search_selection_in_progress", False):
+            return
+        if not model_index or not model_index.isValid():
+            return
+        display_text = model_index.data(Qt.ItemDataRole.DisplayRole)
+        if not display_text:
+            return
+        self.on_product_search_selected(str(display_text))
     def refresh_product_search_options(self):
         if not hasattr(self, "_completer_model"):
             return
         self._product_search_list = [
-            f"{data['name']} ({sku})" for sku, data in product_variant_lookup.items()
+            self._build_product_search_display(sku, data) for sku, data in product_variant_lookup.items()
         ]
         current_text = self.entry_product_search.currentText()
         self.entry_product_search.blockSignals(True)
@@ -6185,6 +7036,7 @@ class POSMainWindow(QMainWindow):
             "price": 0.0,
             "qty": quantity,
             "Stock No.": barcode,
+            "code": variant.get("code"),
             "base_stock_no": barcode,
             "variant_index": variant_index,
             "inventory_usage": 1,
@@ -6196,7 +7048,7 @@ class POSMainWindow(QMainWindow):
         promo_label = promo_code or "FREEBIE"
         details = f"{item['name']} x{quantity} ({promo_label})"
         self.log_user_action("Added freebie to cart", details)
-        self.listbox.addItem(f"{barcode} - {item['name']} x{quantity} - FREE")
+        self.listbox.addItem(self.format_cart_item_label(item))
         return item
     def apply_basket_freebies_to_cart(self, subtotal):
         """Award qualifying freebies based on the order subtotal."""
@@ -6260,9 +7112,18 @@ class POSMainWindow(QMainWindow):
         self.label_product_name_display.setText("PRODUCT NAME: ")
         self.label_product_price_display.setText("PRICE: ")
         self.label_product_stock_display.setText("STOCK: ")
-        self.label_product_barcode_number.setText("STOCK NO.: ")
+        self.label_product_barcode_number.setText("CODE/STOCK: ")
         self.label_product_image.setPixmap(self.default_pixmap)
         self.set_display_context()
+
+    def focus_product_search_box(self):
+        """Give focus to the product search field when the shortcut is pressed."""
+        if hasattr(self, "entry_product_search") and self.entry_product_search is not None:
+            self.entry_product_search.setFocus()
+            line_edit = self.entry_product_search.lineEdit()
+            if line_edit:
+                line_edit.selectAll()
+
     def display_product_image(self, image_filename, stock_no=None):
         if stock_no is None:
             stock_no = getattr(self, "current_display_barcode", None)
@@ -6331,20 +7192,18 @@ class POSMainWindow(QMainWindow):
         self.display_product_image(new_filename, self.current_display_barcode)
         self.set_display_context(self.current_display_barcode, variant_index, None)
         show_info("Image Updated", "Product image has been updated.", self)
-    def add_item_to_cart_by_sku(self, sku, show_not_found=True):
+    def add_item_to_cart_by_sku(self, sku, show_not_found=True, apply_promo_multiplier=False):
         global current_item_count, current_discount
         lookup = product_variant_lookup.get(sku)
-        if lookup is None:
-            alias_key = product_variant_aliases.get(sku)
-            if alias_key:
-                lookup = product_variant_lookup.get(alias_key)
-                sku = alias_key
         if lookup is None:
             if show_not_found:
                 show_warning("Not Found", f"Barcode '{sku}' not found in product database.", self)
                 self.display_product_image(None, sku)
             return False
         qty = current_item_count
+        promo_multiplier = promo_quantity_multiplier(lookup.get("promo_code"))
+        if apply_promo_multiplier and promo_multiplier > 1:
+            qty *= promo_multiplier
         price = lookup['price']
         if current_discount > 0:
             price = price * (1 - current_discount / 100)
@@ -6393,6 +7252,7 @@ class POSMainWindow(QMainWindow):
                 "price": price,
                 "qty": qty,
                 "Stock No.": lookup['sku'],
+                "code": lookup.get('code'),
                 "base_stock_no": None,
                 "variant_index": None,
                 "inventory_usage": None,
@@ -6444,6 +7304,7 @@ class POSMainWindow(QMainWindow):
             "price": price,
             "qty": qty,
             "Stock No.": lookup['sku'],
+            "code": lookup.get('code'),
             "base_stock_no": base_barcode,
             "variant_index": variant_index,
             "inventory_usage": lookup.get('inventory_usage', 1),
@@ -6461,7 +7322,9 @@ class POSMainWindow(QMainWindow):
         self.label_product_name_display.setText(f"Name: {item['name']}")
         self.label_product_price_display.setText(f"Price: P{lookup['price']:.2f}")
         self.label_product_stock_display.setText(f"Stock: {variant['stock']}")
-        self.label_product_barcode_number.setText(f"Stock No.: {lookup['sku']}")
+        identifier = render_product_identifier(lookup.get('code'), lookup['sku'])
+        display_identifier = identifier or lookup['sku']
+        self.label_product_barcode_number.setText(f"Code/Stock: {display_identifier}")
         self.display_product_image(variant.get('image_filename'), lookup.get('sku'))
         self.set_display_context(base_barcode, variant_index, None)
         self.clear_product_search_entry()
@@ -6553,6 +7416,7 @@ class POSMainWindow(QMainWindow):
         dialog.setFixedSize(300, 200)
         v_layout = QVBoxLayout()
         dialog.setLayout(v_layout)
+        self._track_modal_dialog(dialog, "_active_payment_dialog")
         lbl = QLabel("Select Payment Method:")
         lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         v_layout.addWidget(lbl, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -6574,15 +7438,71 @@ class POSMainWindow(QMainWindow):
         v_layout.addWidget(btn_both)
         dialog.exec()
         return selected_method["method"]
+
+    def _build_transaction_reference(self, transaction_uuid):
+        """
+        Build a deterministic reference label for the current transaction using the POS prefix settings.
+        """
+        prefix = (api_settings or {}).get("order_reference_prefix") if api_settings else None
+        return generate_reference_code(prefix or TRANSACTION_REFERENCE_PREFIX, seed=transaction_uuid)
+
+    def generate_local_reference_label(self):
+        """Return a human-friendly reference used when tagging local-only exports."""
+        return generate_reference_code(LOCAL_EXPORT_REFERENCE_PREFIX)
+
+    def _record_transaction_tracking(
+        self,
+        *,
+        transaction_uuid,
+        reference_label,
+        sales_key,
+        payment_method,
+        ledger_lines,
+        total_amount,
+        cash_amount,
+        gcash_amount,
+    ):
+        """
+        Store metadata about the completed transaction so export/post/void flows can correlate line items.
+        """
+        if not transaction_uuid or not ledger_lines:
+            return
+        entry = {
+            "transaction_uuid": transaction_uuid,
+            "reference_label": reference_label,
+            "sales_key": sales_key,
+            "payment_method": payment_method,
+            "total_amount": float(total_amount),
+            "cash_amount": float(cash_amount or 0.0),
+            "gcash_amount": float(gcash_amount or 0.0),
+            "line_items": deepcopy(ledger_lines),
+            "day_code": datetime.now().strftime("%Y%m%d"),
+            "created_at": datetime.now().strftime(REFERENCE_TIMESTAMP_FORMAT),
+        }
+        register_transaction_ledger_entry(entry)
+
     def checkout(self):
         global current_sales_number, current_transaction_number, receipts_archive
         global total_cash_tendered, total_gcash_tendered
         global sales_summary_vault, total_cash_tendered_vault, total_gcash_tendered_vault
         simulation_mode = bool(getattr(self, "simulation_manager", None) and self.simulation_manager.is_active)
+        simulation_checkout_token = None
+        if simulation_mode and getattr(self, "simulation_manager", None):
+            simulation_checkout_token = self.simulation_manager.get_active_checkout_token()
         if not self.cart:
             show_info("Info", "Cart is empty. Please add items before checking out.", self)
             self.log_user_action("Checkout cancelled", "Cart empty")
             return
+        transaction_uuid = generate_transaction_uuid()
+        transaction_reference = self._build_transaction_reference(transaction_uuid)
+        ledger_line_entries = []
+        ledger_sequence = 1
+        api_catalog_skus = set()
+        cache_entry = getattr(self, "_api_catalog_cache", None)
+        if cache_entry and isinstance(cache_entry, dict):
+            cached_skus = cache_entry.get("skus")
+            if isinstance(cached_skus, (set, list, tuple)):
+                api_catalog_skus = set(cached_skus)
         self.remove_existing_freebies_from_cart()
         self.applied_freebies = []
         self.applied_freebie_messages = []
@@ -6795,16 +7715,23 @@ class POSMainWindow(QMainWindow):
         receipt_text_content += f"{'SUNNYWARE PHILIPPINES':^{width}}\n"
         receipt_text_content += f"{'Metro Manila, Philippines':^{width}}\n"
         receipt_text_content += f"{'---SALES ORDER SLIP---':^{width}}\n"
-        receipt_text_content += f"{sales_trans_line:^{width}}\n\n"
+        receipt_text_content += f"{sales_trans_line:^{width}}\n"
+        if not simulation_mode:
+            receipt_text_content += f"{('REF: ' + transaction_reference):^{width}}\n"
+        receipt_text_content += "\n"
         for item in self.cart:
-            name = item['name']
+            raw_name = sanitize_product_name(item.get('name'))
+            fallback_label = item.get('Stock No.') or item.get('base_stock_no') or ""
+            name = raw_name or str(fallback_label).strip() or "Item"
             qty = item.get('qty', 1)
             price = item['price']
             line_total_val = price * qty
             line_total = f"P{line_total_val:,.2f}"
             unit_price = f"P{price:,.2f}"
             promo_suffix = item.get('promo_code')
-            full_name = name.replace("\n", " ")
+            identifier = render_product_identifier(item.get("code"), item.get("Stock No."))
+            label_prefix = f"{identifier} " if identifier else ""
+            full_name = f"{label_prefix}{name}".strip().replace("\n", " ") or (identifier or name)
             append_columns(full_name)
             if promo_suffix:
                 label = promo_suffix if qty == 1 else f"{qty} x {promo_suffix}"
@@ -6813,7 +7740,7 @@ class POSMainWindow(QMainWindow):
                 append_columns(f"{qty} @ {unit_price}", line_total)
             if item.get('bundle_components'):
                 for component in item['bundle_components']:
-                    component_name = component.get("name") or component.get("barcode")
+                    component_name = sanitize_product_name(component.get("name"), component.get("barcode"))
                     component_qty = component.get("quantity", 1)
                     append_columns(f"  - {component_qty} x {component_name}")
             receipt_text_content += "\n"
@@ -6853,6 +7780,7 @@ class POSMainWindow(QMainWindow):
         if not simulation_mode:
             receipts_archive[sales_trans_label] = receipt_text_content
         receipt_dialog = ReceiptDialog(receipt_text_content, self)
+        self._track_modal_dialog(receipt_dialog, "_active_receipt_dialog")
         if simulation_mode:
             receipt_dialog.setWindowTitle("Simulation Receipt")
         receipt_dialog.exec()
@@ -6915,6 +7843,21 @@ class POSMainWindow(QMainWindow):
                                 "total_price": component_total,
                                 "is_freebie": is_freebie,
                             })
+                        ledger_line_entries.append(
+                            {
+                                "line_id": f"{transaction_uuid[:8]}-{ledger_sequence:03d}",
+                                "sku": barcode,
+                                "name": component.get("name") or barcode,
+                                "quantity": int(quantity),
+                                "unit_price": price_per_unit,
+                                "line_total": component_total,
+                                "is_freebie": is_freebie,
+                                "bundle_parent": item.get("name"),
+                                "status": "pending",
+                                "api_candidate": barcode in api_catalog_skus,
+                            }
+                        )
+                        ledger_sequence += 1
                     continue
                 sku = item.get('Stock No.')
                 base_barcode = item.get('base_stock_no', sku)
@@ -6952,6 +7895,20 @@ class POSMainWindow(QMainWindow):
                         "total_price": line_total_amount,
                         "is_freebie": is_freebie,
                     })
+                ledger_line_entries.append(
+                    {
+                        "line_id": f"{transaction_uuid[:8]}-{ledger_sequence:03d}",
+                        "sku": base_barcode,
+                        "name": item.get("name") or base_barcode,
+                        "quantity": int(deduction_units),
+                        "unit_price": price_per_unit,
+                        "line_total": line_total_amount,
+                        "is_freebie": is_freebie,
+                        "status": "pending",
+                        "api_candidate": base_barcode in api_catalog_skus,
+                    }
+                )
+                ledger_sequence += 1
             self.persist_checkout_to_database(
                 next_sales_number,
                 sales_trans_label,
@@ -6961,6 +7918,7 @@ class POSMainWindow(QMainWindow):
                 change,
                 payment_method,
                 sale_items_records,
+                transaction_uuid=transaction_uuid,
             )
             save_products_to_database(self)
             current_sales_number = next_sales_number
@@ -6969,6 +7927,16 @@ class POSMainWindow(QMainWindow):
             save_receipts_archive()
             save_sales_vault()
             save_inventory_summary()
+            self._record_transaction_tracking(
+                transaction_uuid=transaction_uuid,
+                reference_label=transaction_reference,
+                sales_key=sales_trans_label,
+                payment_method=payment_method,
+                ledger_lines=ledger_line_entries,
+                total_amount=total,
+                cash_amount=cash_amount,
+                gcash_amount=gcash_amount,
+            )
         cart_snapshot = [deepcopy(entry) for entry in self.cart]
         tender_segments = []
         if cash_amount > 0:
@@ -6993,7 +7961,7 @@ class POSMainWindow(QMainWindow):
         action_label = "Completed checkout (Simulation)" if simulation_mode else "Completed checkout"
         self.log_user_action(
             action_label,
-            f"Total P{total:,.2f}, Paid P{total_paid:,.2f}, Change P{change:,.2f}, Tender: {tender_detail}. Items: {cart_summary}",
+            f"Ref {transaction_reference} | Total P{total:,.2f}, Paid P{total_paid:,.2f}, Change P{change:,.2f}, Tender: {tender_detail}. Items: {cart_summary}",
         )
         # Clear cart and UI
         self.cart.clear()
@@ -7011,6 +7979,7 @@ class POSMainWindow(QMainWindow):
                 receipt_text_content,
                 cash_amount,
                 gcash_amount,
+                checkout_token=simulation_checkout_token,
             )
     def persist_checkout_to_database(
         self,
@@ -7022,6 +7991,7 @@ class POSMainWindow(QMainWindow):
         change_due,
         payment_method,
         sale_items_records,
+        transaction_uuid=None,
     ):
         """
         Persist the completed sale, its line items, and receipt text to the MySQL database.
@@ -7030,6 +8000,7 @@ class POSMainWindow(QMainWindow):
         if not conn:
             return
         try:
+            ensure_sales_reference_columns(conn)
             with conn.cursor(dictionary=True) as cursor:
                 cursor.execute(
                     "SELECT user_id FROM users WHERE username = %s",
@@ -7049,12 +8020,13 @@ class POSMainWindow(QMainWindow):
                 cursor.execute(
                     """
                     INSERT INTO sales_transactions
-                        (sales_no, transaction_time, cashier_id, total_amount, payment_method, amount_tendered, change_given)
+                        (sales_no, transaction_uuid, transaction_time, cashier_id, total_amount, payment_method, amount_tendered, change_given)
                     VALUES
-                        (%s, NOW(), %s, %s, %s, %s, %s)
+                        (%s, %s, NOW(), %s, %s, %s, %s, %s)
                     """,
                     (
                         sales_no_value,
+                        transaction_uuid,
                         cashier_id,
                         float(total_amount),
                         payment_method,
@@ -7132,9 +8104,17 @@ class POSMainWindow(QMainWindow):
         save_inventory_summary()
         save_products_to_database(self)
         self.log_user_action("Accessed inventory management")
-    def clear_sales_summary_with_reference(self, ref_no, parent_widget=None, show_feedback=True):
+    def clear_sales_summary_with_reference(
+        self,
+        ref_no,
+        parent_widget=None,
+        show_feedback=True,
+        target_skus=None,
+        clear_reason="manual",
+        auto_generated=False,
+    ):
         """
-        Tags unposted sales with ref_no, clears local summary totals, and persists the reset.
+        Tags unposted sales with ref_no, clears local summary totals (fully or partially), and persists the reset.
         Returns a dictionary with counts on success, or None on failure.
         """
         global sales_summary, total_cash_tendered, total_gcash_tendered
@@ -7143,27 +8123,71 @@ class POSMainWindow(QMainWindow):
         if not ref_no:
             show_error("Missing Reference", "A valid SI / reference number is required.", widget)
             return None
-        success, counts = assign_reference_to_sales(ref_no, widget)
+        normalized_targets = None
+        if target_skus:
+            seen = []
+            for value in target_skus:
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text and text not in seen:
+                    seen.append(text)
+            normalized_targets = seen or None
+        prior_sku_count = len(sales_summary)
+        removed_revenue = 0.0
+        if normalized_targets is None:
+            for entry in sales_summary.values():
+                removed_revenue += float((entry or {}).get("revenue") or 0.0)
+        else:
+            for sku in normalized_targets:
+                snapshot = sales_summary.get(sku) or {}
+                removed_revenue += float(snapshot.get("revenue") or 0.0)
+        success, counts = assign_reference_to_sales(ref_no, widget, stock_numbers=normalized_targets)
         if not success:
             return None
         transactions_tagged, items_tagged = counts
-        sales_summary.clear()
-        total_cash_tendered = 0.0
-        total_gcash_tendered = 0.0
+        tag_transaction_lines_with_reference(ref_no, normalized_targets, clear_reason)
+        if normalized_targets is None:
+            cleared_sku_count = prior_sku_count
+            sales_summary.clear()
+            total_cash_tendered = 0.0
+            total_gcash_tendered = 0.0
+            save_tendered_amounts()
+        else:
+            cleared_sku_count = len(normalized_targets)
+            for sku in normalized_targets:
+                sales_summary.pop(sku, None)
+            self._deduct_tender_totals_for_revenue(removed_revenue)
         save_sales_summary()
-        save_tendered_amounts()
         self.sales_summary = sales_summary
+        action_label = "Cleared sales summary" if normalized_targets is None else "Partially cleared sales summary"
+        if clear_reason and clear_reason != "manual":
+            action_label = f"{action_label} ({clear_reason.replace('_', ' ').title()})"
         self.log_user_action(
-            "Cleared sales summary",
-            f"Reference {ref_no} | Transactions tagged: {transactions_tagged} | Items tagged: {items_tagged}",
+            action_label,
+            f"Reference {ref_no} | Transactions tagged: {transactions_tagged} | Items tagged: {items_tagged} | SKUs removed: {cleared_sku_count}",
         )
         if show_feedback:
-            message_lines = [
-                "Sales summary cleared.",
-                f"Tagged {transactions_tagged} transaction(s) and {items_tagged} item(s) with reference '{ref_no}'.",
-            ]
-            show_info("Sales Summary Cleared", "\n".join(message_lines), widget)
-        return {"transactions": transactions_tagged, "items": items_tagged}
+            if normalized_targets is None:
+                message_title = "Sales Summary Cleared"
+                message_lines = [
+                    "Sales summary cleared.",
+                    f"Tagged {transactions_tagged} transaction(s) and {items_tagged} item(s) with reference '{ref_no}'.",
+                ]
+            else:
+                message_title = "Sales Summary Updated"
+                message_lines = [
+                    "Tagged matching items with the provided reference.",
+                    f"Removed {cleared_sku_count} SKU(s) from the dashboard. Remaining items stay pending for manual export.",
+                ]
+                if removed_revenue > 0:
+                    message_lines.append(
+                        f"Adjusted tender totals by P{removed_revenue:,.2f} to keep metrics accurate."
+                    )
+            if auto_generated:
+                message_lines.append("Reference generated automatically for tagging.")
+            show_info(message_title, "\n".join(message_lines), widget)
+        return {"transactions": transactions_tagged, "items": items_tagged, "skus": cleared_sku_count}
     def post_sales_invoice(self, parent_widget=None):
         """
         Posts the current sales summary as an invoice via the configured API and clears the summary on success.
@@ -7172,14 +8196,22 @@ class POSMainWindow(QMainWindow):
         widget = parent_widget or self
         if not ensure_api_settings_loaded(widget):
             return False
+        api_skus = self.get_api_catalog_skus(parent_widget=widget)
+        if api_skus is None:
+            return False
         if not sales_summary:
             show_info("Sales Invoice", "No sales data available to post.", widget)
             return False
         items = []
+        posted_skus = []
+        skipped_items = []
         include_unit_price = api_settings.get("include_unit_price")
         for sku, data in sales_summary.items():
             qty = int(data.get("qty_sold") or 0)
             if qty <= 0:
+                continue
+            sku_text = str(sku).strip()
+            if not sku_text:
                 continue
             revenue = float(data.get("revenue") or 0.0)
             unit_price = revenue / qty if qty and include_unit_price else None
@@ -7187,16 +8219,30 @@ class POSMainWindow(QMainWindow):
             variants = self.products.get(sku)
             if variants:
                 variant_name = variants[0].get("name", sku)
+            if sku_text not in api_skus:
+                skipped_items.append(
+                    {
+                        "sku": sku_text,
+                        "name": variant_name,
+                        "quantity": qty,
+                    }
+                )
+                continue
             items.append(
                 {
-                    "sku": sku,
+                    "sku": sku_text,
                     "quantity": qty,
                     "unitPrice": round(unit_price, 2) if unit_price is not None else None,
                     "remarks": variant_name,
                 }
             )
+            posted_skus.append(sku_text)
         if not items:
-            show_info("Sales Invoice", "No qualifying sales items found to post.", widget)
+            show_info(
+                "Sales Invoice",
+                "No qualifying sales items matched the API catalog. Use 'Export Local Items' to process the remaining entries.",
+                widget,
+            )
             return False
         today_str = datetime.now().strftime("%Y-%m-%d")
         prefix = api_settings.get("order_reference_prefix") or "POS"
@@ -7252,9 +8298,15 @@ class POSMainWindow(QMainWindow):
                 data["txn_date"] = txn_date
             if warehouse_id and not data.get("warehouse_id"):
                 data["warehouse_id"] = str(warehouse_id)
-        ref_no = data.get("ref_no") or data.get("id") or payload.get("orderReference")
+        ref_no = data.get("ref_no") or data.get("order_no") or data.get("id") or payload.get("orderReference")
         amount_due = data.get("amount_due")
-        summary_stats = self.clear_sales_summary_with_reference(ref_no, parent_widget=widget, show_feedback=False)
+        summary_stats = self.clear_sales_summary_with_reference(
+            ref_no,
+            parent_widget=widget,
+            show_feedback=False,
+            target_skus=posted_skus,
+            clear_reason="api_post",
+        )
         message_lines = ["Sales invoice created successfully."]
         if ref_no:
             message_lines.append(f"Reference: {ref_no}")
@@ -7264,8 +8316,15 @@ class POSMainWindow(QMainWindow):
             message_lines.append(
                 f"Tagged {summary_stats['transactions']} transaction(s) and {summary_stats['items']} item(s) before clearing the summary."
             )
+            cleared_skus = summary_stats.get("skus")
+            if cleared_skus is not None:
+                message_lines.append(f"Removed {cleared_skus} SKU(s) from the dashboard.")
         else:
             message_lines.append("Sales summary was not cleared automatically. Please clear it manually.")
+        if skipped_items:
+            message_lines.append(
+                f"Skipped {len(skipped_items)} local item(s) not found on the API. Export them via 'Export Local Items'."
+            )
         show_info("Sales Invoice Posted", "\n".join(message_lines), widget)
         if using_stub:
             show_info(
@@ -7275,7 +8334,7 @@ class POSMainWindow(QMainWindow):
             )
         self.log_user_action(
             "Posted sales invoice",
-            f"Reference {ref_no or 'N/A'} | Items sent: {len(items)}",
+            f"Reference {ref_no or 'N/A'} | Items sent: {len(items)} | Skipped: {len(skipped_items)}",
         )
         return True
     def summary_view(self):
@@ -7339,6 +8398,168 @@ class POSMainWindow(QMainWindow):
     def show_archive_labels(self):
         dlg = ArchiveDialog(self)
         dlg.exec()
+
+    def void_archived_receipt(self, receipt_key, parent_widget=None):
+        """
+        Reverse an already-posted receipt by restoring stock, removing DB records, and updating metrics.
+        """
+        global receipts_archive, sales_summary, sales_summary_vault
+        global total_cash_tendered, total_gcash_tendered
+        global total_cash_tendered_vault, total_gcash_tendered_vault
+        widget = parent_widget or self
+        receipt_key = (receipt_key or "").strip()
+        if not receipt_key:
+            show_warning("Void Receipt", "Please select a receipt to void.", widget)
+            return False
+        receipt_text = receipts_archive.get(receipt_key)
+        if not receipt_text:
+            show_error("Void Receipt", "Receipt content was not found in the archive.", widget)
+            return False
+        conn = get_db_connection(self)
+        if not conn:
+            show_error("Database Error", "Unable to connect to the database to void the receipt.", widget)
+            return False
+        transaction_row = None
+        sale_items = []
+        transaction_id = None
+        transaction_uuid = None
+        try:
+            with conn.cursor(dictionary=True) as cursor:
+                cursor.execute(
+                    """
+                    SELECT r.transaction_id,
+                           st.sales_no,
+                           st.total_amount,
+                           st.amount_tendered,
+                           st.change_given,
+                           st.payment_method,
+                           st.transaction_uuid,
+                           st.transaction_time
+                      FROM receipts r
+                      JOIN sales_transactions st ON r.transaction_id = st.transaction_id
+                     WHERE r.sales_key = %s
+                    """,
+                    (receipt_key,),
+                )
+                transaction_row = cursor.fetchone()
+                if not transaction_row:
+                    show_error(
+                        "Void Receipt",
+                        "The receipt is missing its transaction record. Nothing was voided.",
+                        widget,
+                    )
+                    return False
+                transaction_id = transaction_row["transaction_id"]
+                transaction_uuid = transaction_row.get("transaction_uuid")
+                cursor.execute(
+                    """
+                    SELECT product_id, quantity, price_per_unit, total_price, is_freebie
+                      FROM sales_items
+                     WHERE transaction_id = %s
+                    """,
+                    (transaction_id,),
+                )
+                sale_items = cursor.fetchall() or []
+            with conn.cursor() as cursor:
+                cursor.execute("DELETE FROM sales_items WHERE transaction_id = %s", (transaction_id,))
+                cursor.execute("DELETE FROM receipts WHERE sales_key = %s", (receipt_key,))
+                cursor.execute("DELETE FROM sales_transactions WHERE transaction_id = %s", (transaction_id,))
+            conn.commit()
+        except Error as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            show_error("Database Error", f"Failed to void the receipt:\n{exc}", widget)
+            return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        # Restore inventory and local summaries
+        restored_units = 0
+        missing_products = []
+        total_revenue_removed = 0.0
+        for item in sale_items:
+            product_id = item.get("product_id")
+            qty = int(item.get("quantity") or 0)
+            total_price = float(item.get("total_price") or 0.0)
+            is_freebie = bool(item.get("is_freebie"))
+            if qty <= 0:
+                continue
+            barcode, variant, _ = locate_variant_by_product_id(product_id)
+            if not variant:
+                missing_products.append(str(product_id))
+                continue
+            new_stock = float(variant.get("stock", 0)) + qty
+            if isinstance(new_stock, float) and new_stock.is_integer():
+                new_stock = int(new_stock)
+            variant["stock"] = new_stock
+            restored_units += qty
+            if not is_freebie:
+                summary_entry = sales_summary.setdefault(barcode, {"qty_sold": 0, "revenue": 0.0})
+                summary_entry["qty_sold"] = max(0, int(summary_entry.get("qty_sold", 0)) - qty)
+                summary_entry["revenue"] = max(0.0, float(summary_entry.get("revenue", 0.0)) - total_price)
+                vault_entry = sales_summary_vault.setdefault(barcode, {"qty_sold": 0, "revenue": 0.0})
+                vault_entry["qty_sold"] = max(0, int(vault_entry.get("qty_sold", 0)) - qty)
+                vault_entry["revenue"] = max(0.0, float(vault_entry.get("revenue", 0.0)) - total_price)
+                total_revenue_removed += total_price
+            if barcode in inventory_summary:
+                inv_entry = inventory_summary[barcode]
+                inv_entry["stock"] = int(inv_entry.get("stock", 0)) + qty
+                if not is_freebie:
+                    inv_entry["qty_sold"] = max(0, int(inv_entry.get("qty_sold", 0)) - qty)
+                    inv_entry["revenue"] = max(0.0, float(inv_entry.get("revenue", 0.0)) - total_price)
+        # Update tender totals using receipt content
+        payment_details = parse_receipt_payment_breakdown(receipt_text)
+        cash_removed = float(payment_details.get("cash") or 0.0)
+        gcash_removed = float(payment_details.get("gcash") or 0.0)
+        payment_label = payment_details.get("payment_method") or transaction_row.get("payment_method", "")
+        if payment_label:
+            payment_label = payment_label.strip()
+        if cash_removed == 0 and gcash_removed == 0:
+            fallback_method = (transaction_row.get("payment_method") or "").strip().lower()
+            tendered_total = float(transaction_row.get("amount_tendered") or 0.0)
+            if fallback_method == "cash only":
+                cash_removed = tendered_total
+            elif fallback_method == "gcash only":
+                gcash_removed = tendered_total
+        if cash_removed > 0:
+            total_cash_tendered = max(0.0, float(total_cash_tendered) - cash_removed)
+            total_cash_tendered_vault = max(0.0, float(total_cash_tendered_vault) - cash_removed)
+        if gcash_removed > 0:
+            total_gcash_tendered = max(0.0, float(total_gcash_tendered) - gcash_removed)
+            total_gcash_tendered_vault = max(0.0, float(total_gcash_tendered_vault) - gcash_removed)
+        receipts_archive.pop(receipt_key, None)
+        save_receipts_archive()
+        if transaction_uuid:
+            mark_transaction_voided(transaction_uuid)
+        save_sales_vault()
+        save_products_to_database(self)
+        save_inventory_summary()
+        save_tendered_amounts()
+        summary_lines = [
+            f"Receipt '{receipt_key}' voided.",
+            f"Units restored: {restored_units}",
+        ]
+        if cash_removed > 0 or gcash_removed > 0:
+            summary_lines.append(
+                f"Tender reversed - Cash: P{cash_removed:,.2f}, GCash: P{gcash_removed:,.2f}"
+            )
+        if total_revenue_removed > 0:
+            summary_lines.append(f"Sales removed: P{total_revenue_removed:,.2f}")
+        if missing_products:
+            summary_lines.append(
+                f"Warning: {len(missing_products)} product(s) were missing locally and could not be restocked."
+            )
+        self.log_user_action(
+            "Voided archived receipt",
+            f"{receipt_key} | Units restored: {restored_units} | Cash -P{cash_removed:,.2f} | "
+            f"GCash -P{gcash_removed:,.2f}",
+        )
+        show_info("Receipt Voided", "\n".join(summary_lines), widget)
+        return True
 class SalesSummaryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -7370,8 +8591,10 @@ class SalesSummaryDialog(QDialog):
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(0)
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["STOCK #", "Product Name", "Quantity Sold", "Unit Price", "Total Revenue"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(
+            ["Code", "STOCK #", "Product Name", "Qty Sold", "Unit Price", "Total Revenue"]
+        )
         header = self.table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         header.setHighlightSections(False)
@@ -7423,6 +8646,10 @@ class SalesSummaryDialog(QDialog):
         self.export_pdf_button.setObjectName("SummaryAction")
         self.export_pdf_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_pdf_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.export_local_button = QPushButton("Export Local Items")
+        self.export_local_button.setObjectName("SummaryAction")
+        self.export_local_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_local_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.clear_summary_button = QPushButton("Clear Summary")
         self.clear_summary_button.setObjectName("SummaryAction")
         self.clear_summary_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -7430,12 +8657,14 @@ class SalesSummaryDialog(QDialog):
         side_layout.addWidget(self.post_invoice_button)
         side_layout.addWidget(self.export_excel_button)
         side_layout.addWidget(self.export_pdf_button)
+        side_layout.addWidget(self.export_local_button)
         side_layout.addWidget(self.clear_summary_button)
         content_row.addWidget(side_panel, 1)
         main_layout.addWidget(content_card)
         self.post_invoice_button.clicked.connect(self.trigger_post_sales_invoice)
         self.export_excel_button.clicked.connect(self.export_to_excel)
         self.export_pdf_button.clicked.connect(self.export_to_pdf)
+        self.export_local_button.clicked.connect(self.export_local_items_summary)
         self.clear_summary_button.clicked.connect(self.prompt_clear_summary)
         self.populate_sales_summary()
         self.update_metrics()
@@ -7475,6 +8704,35 @@ class SalesSummaryDialog(QDialog):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         if parent.clear_sales_summary_with_reference(ref_no, parent_widget=self):
+            self.populate_sales_summary()
+            self.update_metrics()
+    def _prompt_clear_specific_skus(self, skus, reason_label):
+        parent = self.parent()
+        if not parent or not hasattr(parent, "clear_sales_summary_with_reference"):
+            show_error("Unavailable", "Clearing the sales summary is not available right now.", self)
+            return
+        auto_ref = parent.generate_local_reference_label() if hasattr(parent, "generate_local_reference_label") else generate_reference_code(LOCAL_EXPORT_REFERENCE_PREFIX)
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Clear",
+            f"Automatically tag {len(skus)} exported item(s) with reference '{auto_ref}' and remove them from the dashboard?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        if parent.clear_sales_summary_with_reference(
+            auto_ref,
+            parent_widget=self,
+            target_skus=skus,
+            clear_reason="local_export",
+            auto_generated=True,
+        ):
+            if hasattr(parent, "log_user_action"):
+                parent.log_user_action(
+                    "Cleared exported items",
+                    f"{reason_label} | Reference {auto_ref} | SKUs: {len(skus)}",
+                )
             self.populate_sales_summary()
             self.update_metrics()
     def _create_metric_card(self, key, title):
@@ -7644,29 +8902,32 @@ class SalesSummaryDialog(QDialog):
         for row, barcode in enumerate(all_codes):
             variants = products.get(barcode, [])
             variant = variants[0] if variants else {}
-            product_name = variant.get('name', barcode)
+            product_name = sanitize_product_name(variant.get('name'), barcode) or barcode
+            code_value = variant.get('code') or ""
             sales_data = dataset.get(barcode, {"qty_sold": 0, "revenue": 0.0})
             quantity_sold = sales_data.get('qty_sold', 0)
             total_revenue = sales_data.get('revenue', 0.0)
             price_per_item = total_revenue / quantity_sold if quantity_sold else 0.0
-            self.table.setItem(row, 0, QTableWidgetItem(barcode))
-            self.table.setItem(row, 1, QTableWidgetItem(product_name))
-            self.table.setItem(row, 2, QTableWidgetItem(f"{quantity_sold:,}"))
-            self.table.setItem(row, 3, QTableWidgetItem(f"P{price_per_item:,.2f}"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"P{total_revenue:,.2f}"))
+            self.table.setItem(row, 0, QTableWidgetItem(code_value))
+            self.table.setItem(row, 1, QTableWidgetItem(barcode))
+            self.table.setItem(row, 2, QTableWidgetItem(product_name))
+            self.table.setItem(row, 3, QTableWidgetItem(f"{quantity_sold:,}"))
+            self.table.setItem(row, 4, QTableWidgetItem(f"P{price_per_item:,.2f}"))
+            self.table.setItem(row, 5, QTableWidgetItem(f"P{total_revenue:,.2f}"))
         QTimer.singleShot(0, self._set_summary_column_widths)
     def _set_summary_column_widths(self):
-        if not self.table or self.table.columnCount() < 5:
+        if not self.table or self.table.columnCount() < 6:
             return
         viewport_width = self.table.viewport().width()
         if viewport_width <= 0:
             return
         padding = 28
         static_columns = {
-            0: 140,
-            2: 120,
-            3: 140,
-            4: 160,
+            0: 120,  # Code
+            1: 140,  # Stock No.
+            3: 120,  # Qty Sold
+            4: 140,  # Unit Price
+            5: 160,  # Total Revenue
         }
         other_total = 0
         for index, minimum in static_columns.items():
@@ -7675,10 +8936,10 @@ class SalesSummaryDialog(QDialog):
             self.table.setColumnWidth(index, width)
             other_total += width
         remaining = viewport_width - other_total
-        product_hint = self.table.sizeHintForColumn(1) + padding
+        product_hint = self.table.sizeHintForColumn(2) + padding
         product_min = 220
         product_width = max(product_min, min(product_hint, max(remaining, product_min)))
-        self.table.setColumnWidth(1, product_width)
+        self.table.setColumnWidth(2, product_width)
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._set_summary_column_widths()
@@ -7696,7 +8957,7 @@ class SalesSummaryDialog(QDialog):
         top_label = "No sales recorded yet"
         if best_code:
             if best_code in products and products[best_code]:
-                product_name = products[best_code][0].get('name', best_code)
+                product_name = sanitize_product_name(products[best_code][0].get('name'), best_code) or best_code
             else:
                 product_name = best_code
             top_label = f"{product_name}\n{best_qty:,} sold"
@@ -7715,12 +8976,14 @@ class SalesSummaryDialog(QDialog):
             if qty_sold <= 0 and abs(revenue) < 0.0001:
                 continue
             variants = products.get(barcode, [])
-            product_name = variants[0].get("name", barcode) if variants else barcode
+            variant = variants[0] if variants else {}
+            product_name = sanitize_product_name(variant.get("name"), barcode) or barcode
             price_per_item = revenue / qty_sold if qty_sold else 0.0
             rows.append({
+                "Code": variant.get("code") or "",
                 "STOCK #": barcode,
                 "Product Name": product_name,
-                "Quantity Sold": qty_sold,
+                "Qty Sold": qty_sold,
                 "Unit Price": price_per_item,
                 "Total Revenue": revenue,
             })
@@ -7745,6 +9008,172 @@ class SalesSummaryDialog(QDialog):
             # Refresh views so any new data is reflected.
             self.populate_sales_summary()
             self.update_metrics()
+    def _apply_sales_sheet_formatting(
+        self,
+        worksheet,
+        df,
+        workbook,
+        *,
+        include_tenders=False,
+        cash_total=0.0,
+        gcash_total=0.0,
+    ):
+        """Apply consistent header styling and auto-fit the sales summary columns."""
+        currency_format = workbook.add_format({"num_format": "Php #,##0.00"})
+        qty_format = workbook.add_format({"num_format": "#,##0"})
+        header_format = workbook.add_format(
+            {
+                "bold": True,
+                "bg_color": "#e5e7eb",
+                "font_color": "#111827",
+                "align": "left",
+                "valign": "vcenter",
+                "bottom": 1,
+            }
+        )
+        bold_format = workbook.add_format({"bold": True})
+        column_formats = {
+            "Qty Sold": qty_format,
+            "Unit Price": currency_format,
+            "Total Revenue": currency_format,
+        }
+        self._autofit_sales_columns(
+            worksheet,
+            df,
+            column_formats,
+            include_tenders=include_tenders,
+            cash_total=cash_total,
+            gcash_total=gcash_total,
+        )
+        for col_idx, column_name in enumerate(df.columns):
+            worksheet.write(0, col_idx, column_name, header_format)
+        worksheet.set_row(len(df) - 1, None, bold_format)
+        return {
+            "currency": currency_format,
+            "qty": qty_format,
+            "bold": bold_format,
+        }
+
+    def _write_sales_dataframe(
+        self,
+        file_path,
+        df,
+        sheet_name,
+        *,
+        include_tenders=False,
+        cash_total=0.0,
+        gcash_total=0.0,
+    ):
+        """
+        Save a pandas DataFrame to Excel. Uses xlsxwriter formatting when available.
+        Returns True if advanced formatting was applied.
+        """
+        if has_xlsxwriter_support():
+            with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                workbook = writer.book
+                worksheet = writer.sheets[sheet_name]
+                formats = self._apply_sales_sheet_formatting(
+                    worksheet,
+                    df,
+                    workbook,
+                    include_tenders=include_tenders,
+                    cash_total=cash_total,
+                    gcash_total=gcash_total,
+                )
+                if include_tenders:
+                    row_after = len(df) + 1
+                    worksheet.write(row_after, 0, "Cash:", formats["bold"])
+                    worksheet.write(row_after, 1, cash_total, formats["currency"])
+                    worksheet.write(row_after + 1, 0, "GCash:", formats["bold"])
+                    worksheet.write(row_after + 1, 1, gcash_total, formats["currency"])
+            return True
+        # Fallback without styling – relies on pandas default engine (typically openpyxl)
+        try:
+            df.to_excel(file_path, sheet_name=sheet_name, index=False)
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "Excel export requires an engine such as 'xlsxwriter'. "
+                "Install it via 'pip install xlsxwriter' and try again."
+            ) from exc
+        return False
+    def _autofit_sales_columns(
+        self,
+        worksheet,
+        df,
+        column_formats,
+        *,
+        include_tenders=False,
+        cash_total=0.0,
+        gcash_total=0.0,
+    ):
+        """Resize Excel columns so headers and values remain readable."""
+        padding = 2
+        max_width = 60
+        tender_samples = {
+            0: ["Cash:", "GCash:"] if include_tenders else [],
+            1: (
+                [f"Php {cash_total:,.2f}", f"Php {gcash_total:,.2f}"]
+                if include_tenders
+                else []
+            ),
+        }
+        for col_idx, column_name in enumerate(df.columns):
+            samples = [column_name]
+            samples.extend(
+                self._preview_value_for_column(column_name, value)
+                for value in df[column_name]
+            )
+            samples.extend(tender_samples.get(col_idx, []))
+            filtered = [s for s in samples if isinstance(s, str)]
+            if not filtered:
+                continue
+            length = max(len(entry) for entry in filtered)
+            width = min(max(length + padding, 10), max_width)
+            worksheet.set_column(
+                col_idx,
+                col_idx,
+                width,
+                column_formats.get(column_name),
+            )
+    @staticmethod
+    def _preview_value_for_column(column_name, value):
+        """Return the display string used for auto-fit length calculations."""
+        if value in ("", None) or pd.isna(value):
+            return ""
+        if column_name == "Qty Sold":
+            try:
+                return f"{int(float(value)):,}"
+            except (TypeError, ValueError):
+                return ""
+        if column_name in {"Unit Price", "Total Revenue"}:
+            try:
+                return f"Php {float(value):,.2f}"
+            except (TypeError, ValueError):
+                return ""
+        return str(value)
+    @staticmethod
+    def _compute_pdf_column_widths(table_data, total_width=460, min_widths=None):
+        """Derive column widths proportionally to the content length."""
+        if not table_data:
+            return []
+        column_count = len(table_data[0])
+        min_widths = min_widths or [60] * column_count
+        char_unit = 4.2
+        max_lengths = [0] * column_count
+        for row in table_data:
+            for idx, cell in enumerate(row):
+                text = str(cell)
+                max_lengths[idx] = max(max_lengths[idx], len(text))
+        widths = []
+        for idx, length in enumerate(max_lengths):
+            width = max(min_widths[idx], length * char_unit)
+            widths.append(width)
+        total = sum(widths)
+        if total <= 0:
+            return min_widths
+        scale = min(1.0, total_width / total)
+        return [width * scale for width in widths]
     def export_to_excel(self):
         products, dataset, cash_total, gcash_total = self._get_summary_context()
         rows = self._assemble_sales_rows(products, dataset)
@@ -7757,35 +9186,37 @@ class SalesSummaryDialog(QDialog):
         if not (file_path.lower().endswith(".xlsx") or file_path.lower().endswith(".xls")):
             file_path += ".xlsx"
         try:
-            df = pd.DataFrame(rows, columns=["STOCK #", "Product Name", "Quantity Sold", "Unit Price", "Total Revenue"])
-            total_qty = df["Quantity Sold"].sum()
+            df = pd.DataFrame(
+                rows,
+                columns=["Code", "STOCK #", "Product Name", "Qty Sold", "Unit Price", "Total Revenue"],
+            )
+            total_qty = df["Qty Sold"].sum()
             total_revenue = df["Total Revenue"].sum()
             totals_df = pd.DataFrame([{
+                "Code": "",
                 "STOCK #": "",
                 "Product Name": "Totals",
-                "Quantity Sold": total_qty,
+                "Qty Sold": total_qty,
                 "Unit Price": "",
                 "Total Revenue": total_revenue,
             }])
             df_with_totals = pd.concat([df, totals_df], ignore_index=True)
-            with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
-                df_with_totals.to_excel(writer, sheet_name="Sales Summary", index=False)
-                workbook = writer.book
-                worksheet = writer.sheets["Sales Summary"]
-                currency_format = workbook.add_format({"num_format": "Php #,##0.00"})
-                qty_format = workbook.add_format({"num_format": "#,##0"})
-                worksheet.set_column("C:C", 18, qty_format)
-                worksheet.set_column("D:D", 18, currency_format)
-                worksheet.set_column("E:E", 18, currency_format)
-                bold_format = workbook.add_format({"bold": True})
-                totals_row = len(df_with_totals) - 1
-                worksheet.set_row(totals_row, None, bold_format)
-                row_after = len(df_with_totals) + 1
-                worksheet.write(row_after, 0, "Cash:")
-                worksheet.write(row_after, 1, cash_total, currency_format)
-                worksheet.write(row_after + 1, 0, "GCash:")
-                worksheet.write(row_after + 1, 1, gcash_total, currency_format)
+            formatted = self._write_sales_dataframe(
+                file_path,
+                df_with_totals,
+                "Sales Summary",
+                include_tenders=True,
+                cash_total=cash_total,
+                gcash_total=gcash_total,
+            )
             QMessageBox.information(self, "Export Successful", f"Sales summary has been exported to:\n{file_path}")
+            if not formatted:
+                show_warning(
+                    "Install xlsxwriter for styling",
+                    "Excel export succeeded without styling because 'xlsxwriter' is not installed.\n"
+                    "Run 'pip install xlsxwriter' to enable formatted reports.",
+                    self,
+                )
             self._post_export_reset_prompt("Excel", file_path)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export sales summary to Excel:\n{e}")
@@ -7818,14 +9249,14 @@ class SalesSummaryDialog(QDialog):
                 Paragraph("Sales Summary Report", title_style),
                 Spacer(1, 24),
             ]
-            headers = ["STOCK #", "Product Name", "Quantity Sold", "Unit Price", "Total Revenue"]
+            headers = ["Code", "STOCK #", "Product Name", "Qty Sold", "Unit Price", "Total Revenue"]
             table_data = [headers]
             total_quantity_sold = 0
             total_revenue = 0.0
             max_qty = -1
             most_demanded_name = None
             for entry in rows:
-                qty = entry["Quantity Sold"]
+                qty = entry["Qty Sold"]
                 revenue = entry["Total Revenue"]
                 unit_price = entry["Unit Price"]
                 total_quantity_sold += qty
@@ -7834,39 +9265,76 @@ class SalesSummaryDialog(QDialog):
                     max_qty = qty
                     most_demanded_name = entry["Product Name"]
                 table_data.append([
+                    entry["Code"],
                     entry["STOCK #"],
                     entry["Product Name"],
                     f"{qty:,}",
                     f"P{unit_price:,.2f}",
                     f"P{revenue:,.2f}",
                 ])
-            sales_table = Table(table_data, colWidths=[70, 180, 80, 80, 110])
+            col_widths = self._compute_pdf_column_widths(
+                table_data,
+                total_width=480,
+                min_widths=[70, 80, 150, 70, 80, 120],
+            )
+            sales_table = Table(
+                table_data,
+                colWidths=col_widths,
+                repeatRows=1,
+            )
             sales_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                ('ALIGN', (0, 0), (1, -1), 'LEFT'),
                 ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#d1d5db")),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 14),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('FONTSIZE', (0, 1), (-1, -1), 9.5),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 1), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LINEABOVE', (0, 0), (-1, 0), 0.75, colors.black),
+                ('LINEBELOW', (0, 0), (-1, 0), 1.0, colors.black),
+                ('INNERGRID', (0, 1), (-1, -1), 0.25, colors.black),
+                ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
             ]))
             elements.append(sales_table)
-            elements.append(Spacer(1, 24))
-            summary_style = styles['Normal']
-            summary_style.fontSize = 16
-            summary_style.textColor = colors.HexColor("#6b7280")
-            elements.append(Paragraph(f"<b>Total Items Sold:</b> {total_quantity_sold:,}", summary_style))
-            elements.append(Paragraph(f"<b>Total Revenue:</b> P{total_revenue:,.2f}", summary_style))
-            elements.append(Paragraph(f"<b>Cash Tendered:</b> P{cash_total:,.2f}", summary_style))
-            elements.append(Paragraph(f"<b>GCash Tendered:</b> P{gcash_total:,.2f}", summary_style))
-            elements.append(Spacer(1, 24))
+            elements.append(Spacer(1, 18))
+            summary_rows = [
+                ("Total Items Sold:", f"{total_quantity_sold:,}"),
+                ("Total Revenue:", f"P{total_revenue:,.2f}"),
+                ("Cash Tendered:", f"P{cash_total:,.2f}"),
+                ("GCash Tendered:", f"P{gcash_total:,.2f}"),
+            ]
+            summary_table = Table(
+                summary_rows,
+                colWidths=[170, 200],
+                hAlign='LEFT',
+            )
+            summary_table.setStyle(TableStyle([
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('LINEABOVE', (0, 0), (-1, 0), 0.5, colors.black),
+                ('LINEBELOW', (0, -1), (-1, -1), 0.5, colors.black),
+            ]))
+            elements.append(summary_table)
+            elements.append(Spacer(1, 18))
             heading2_style = styles['Heading2']
-            heading2_style.textColor = colors.HexColor("#6b7280")
-            heading2_style.fontSize = 20
+            heading2_style.textColor = colors.black
+            heading2_style.fontSize = 16
             elements.append(Paragraph("Most In-Demand Item", heading2_style))
             demand_style = styles['Normal']
-            demand_style.fontSize = 16
+            demand_style.fontSize = 13
             elements.append(Spacer(1, 6))
             if most_demanded_name:
                 elements.append(Paragraph(f"{most_demanded_name} (Sold: {max_qty:,} units)", demand_style))
@@ -7877,6 +9345,87 @@ class SalesSummaryDialog(QDialog):
             self._post_export_reset_prompt("PDF", file_path)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export sales summary to PDF:\n{e}")
+    def export_local_items_summary(self):
+        parent = self.parent()
+        if not parent or not hasattr(parent, "get_api_catalog_skus"):
+            show_error("Unavailable", "API catalog access is not available right now.", self)
+            return
+        api_skus = parent.get_api_catalog_skus(parent_widget=self)
+        if api_skus is None:
+            return
+        products, dataset, *_ = self._get_summary_context()
+        rows = self._assemble_sales_rows(products, dataset)
+        local_rows = [row for row in rows if row["STOCK #"] not in api_skus]
+        if not local_rows:
+            QMessageBox.information(
+                self,
+                "No Local Items",
+                "All sales summary items are present in the API catalog.",
+            )
+            return
+        local_skus = sorted({row["STOCK #"] for row in local_rows})
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Local Items Summary",
+            "",
+            "Excel Files (*.xlsx *.xls)",
+        )
+        if not file_path:
+            return
+        if not (file_path.lower().endswith(".xlsx") or file_path.lower().endswith(".xls")):
+            file_path += ".xlsx"
+        try:
+            df = pd.DataFrame(
+                local_rows,
+                columns=["Code", "STOCK #", "Product Name", "Qty Sold", "Unit Price", "Total Revenue"],
+            )
+            total_qty = df["Qty Sold"].sum()
+            total_revenue = df["Total Revenue"].sum()
+            totals_df = pd.DataFrame([{
+                "Code": "",
+                "STOCK #": "",
+                "Product Name": "Totals",
+                "Qty Sold": total_qty,
+                "Unit Price": "",
+                "Total Revenue": total_revenue,
+            }])
+            df_with_totals = pd.concat([df, totals_df], ignore_index=True)
+            formatted = self._write_sales_dataframe(
+                file_path,
+                df_with_totals,
+                "Local Items",
+            )
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Local-only items have been exported to:\n{file_path}",
+            )
+            if not formatted:
+                show_warning(
+                    "Install xlsxwriter for styling",
+                    "Local items export finished without Excel styling because 'xlsxwriter' is missing.\n"
+                    "Install it with 'pip install xlsxwriter' for formatted sheets.",
+                    self,
+                )
+            if hasattr(parent, "log_user_action"):
+                parent.log_user_action(
+                    "Exported local-only summary",
+                    f"Rows: {len(local_rows)} | File: {file_path}",
+                )
+            action = QMessageBox.question(
+                self,
+                "Tag Exported Items?",
+                "Do you want to tag these exported local items with a reference and clear them now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if action == QMessageBox.StandardButton.Yes:
+                self._prompt_clear_specific_skus(local_skus, "Local export")
+            else:
+                self.populate_sales_summary()
+                self.update_metrics()
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Failed to export local items:\n{exc}")
 class SalesSummaryArchiveDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -8086,6 +9635,22 @@ class ArchiveDialog(QDialog):
         """)
         btn_export.clicked.connect(self.export_receipts)
         layout.addWidget(btn_export)
+        btn_void = QPushButton("Void Selected Receipt")
+        btn_void.setFixedHeight(40)
+        btn_void.setStyleSheet("""
+            QPushButton {
+                background-color: #dc2626;
+                color: white;
+                font-weight: 600;
+                border-radius: 12px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #b91c1c;
+            }
+        """)
+        btn_void.clicked.connect(self.handle_void_selected)
+        layout.addWidget(btn_void)
         # Connect double click signal to display receipt
         self.list_widget.itemDoubleClicked.connect(self.show_receipt_view)
     def populate_receipts(self):
@@ -8118,6 +9683,39 @@ class ArchiveDialog(QDialog):
         receipt_content = receipts_archive.get(receipt_id, "Receipt content not found.")
         dlg = ReceiptDialog(receipt_content, self)
         dlg.exec()
+
+    def handle_void_selected(self):
+        item = self.list_widget.currentItem()
+        if not item:
+            show_warning("Void Receipt", "Please select a receipt to void.", self)
+            return
+        receipt_id = item.text()
+        password, ok = QInputDialog.getText(
+            self,
+            "Admin Confirmation",
+            "Enter admin password to void the selected receipt:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return
+        if password != ADMIN_PASSWORD:
+            show_error("Authorization Failed", "Invalid admin password.", self)
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Void",
+            f"Voiding '{receipt_id}' will restore stock and remove its sales data.\nProceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        parent = self.parent()
+        if not parent or not hasattr(parent, "void_archived_receipt"):
+            show_error("Void Receipt", "POS window unavailable. Please try again.", self)
+            return
+        if parent.void_archived_receipt(receipt_id, parent_widget=self):
+            self.populate_receipts()
     def closeEvent(self, event):
         if self.scanner_worker:
             try:
@@ -8141,9 +9739,9 @@ class ReceiptDialog(QDialog):
         self.text_edit.setFont(preview_font)
         self.text_edit.setText(receipt_text_content)
         layout.addWidget(self.text_edit)
-        self.print_three_checkbox = QCheckBox("Print 3 copies")
-        self.print_three_checkbox.setToolTip("Default prints 2 copies. Check to print 3 copies.")
-        layout.addWidget(self.print_three_checkbox)
+        self.print_two_checkbox = QCheckBox("Print 2 copies")
+        self.print_two_checkbox.setToolTip("Default prints 1 copy. Check to print 2 copies.")
+        layout.addWidget(self.print_two_checkbox)
         btn_layout = QHBoxLayout()
         layout.addLayout(btn_layout)
         btn_print = QPushButton("Print Receipt")
@@ -8157,10 +9755,15 @@ class ReceiptDialog(QDialog):
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
+        self.reprint_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self.reprint_shortcut.activated.connect(self._handle_reprint_shortcut)
 
     def _handle_print_clicked(self):
-        copies = 3 if self.print_three_checkbox.isChecked() else 2
+        copies = 2 if self.print_two_checkbox.isChecked() else 1
         print_receipt_pdf(self._receipt_text_content, self, copies)
+
+    def _handle_reprint_shortcut(self):
+        print_receipt_pdf(self._receipt_text_content, self, copies=1)
 
     def save_receipt_as_pdf(self, receipt_text_content):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Receipt as PDF", "", "PDF Files (*.pdf)")
@@ -8211,6 +9814,43 @@ def _normalize_receipt_lines(receipt_text):
     return sanitize(str(receipt_text).splitlines())
 
 
+def _parse_currency_amount(value):
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def parse_receipt_payment_breakdown(receipt_text):
+    """
+    Extract cash / gcash amounts and payment method label from receipt text content.
+    """
+    normalized_text = ""
+    if isinstance(receipt_text, str):
+        normalized_text = receipt_text
+    else:
+        normalized_text = "\n".join(_normalize_receipt_lines(receipt_text))
+
+    def extract(label):
+        pattern = rf"{label}\s*:\s*P?\s*([0-9][0-9,]*(?:\.\d{{1,2}})?)"
+        match = re.search(pattern, normalized_text, flags=re.IGNORECASE)
+        if match:
+            return _parse_currency_amount(match.group(1))
+        return 0.0
+
+    cash_amount = extract("Cash")
+    gcash_amount = extract("GCash")
+    payment_method = None
+    pm_match = re.search(r"Payment\s+Method\s*:\s*(.+)", normalized_text, flags=re.IGNORECASE)
+    if pm_match:
+        payment_method = pm_match.group(1).strip()
+    return {
+        "cash": cash_amount,
+        "gcash": gcash_amount,
+        "payment_method": payment_method,
+    }
+
+
 def print_receipt_pdf(receipt_text, parent=None, copies=None):
     layout = compute_receipt_layout()
     width_mm = RECEIPT_PAGE_WIDTH_MM
@@ -8249,9 +9889,9 @@ def print_receipt_pdf(receipt_text, parent=None, copies=None):
         return
 
     try:
-        requested_copies = int(copies) if copies is not None else 2
+        requested_copies = int(copies) if copies is not None else 1
     except (TypeError, ValueError):
-        requested_copies = 2
+        requested_copies = 1
     copies_to_print = max(requested_copies, 1)
     for copy_index in range(copies_to_print):
         try:

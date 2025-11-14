@@ -13,4 +13,4 @@
   "include_unit_price": true,
   "clear_sales_summary_after_post": false,
   "request_timeout_seconds": 30
-}
+} 

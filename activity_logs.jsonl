@@ -1124,3 +1124,25 @@
 {"timestamp": "2025-11-12 14:26:28", "user": "cashier", "action": "Viewed sales summary"}
 {"timestamp": "2025-11-12 14:26:53", "user": "cashier", "action": "Voided archived receipt", "details": "SALES#: 000035   TRANS#: 000035 | Units restored: 3 | Cash -P880.00 | GCash -P0.00"}
 {"timestamp": "2025-11-12 14:26:56", "user": "cashier", "action": "Viewed sales summary"}
+{"timestamp": "2025-11-14 16:17:46", "user": "cashier", "action": "Added item to cart", "details": "None x1 (SKU 605)"}
+{"timestamp": "2025-11-14 16:17:48", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-14 16:18:11", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251114-02A804 | Total P10.00, Paid P10.00, Change P0.00, Tender: Cash P10.00. Items: 605 x1"}
+{"timestamp": "2025-11-14 16:21:52", "user": "cashier", "action": "Added item to cart", "details": "None x1 (SKU 322)"}
+{"timestamp": "2025-11-14 16:21:54", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-14 16:22:44", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251114-6DD825 | Total P10.00, Paid P10.00, Change P0.00, Tender: Cash P10.00. Items: 322 x1"}
+{"timestamp": "2025-11-14 16:22:48", "user": "cashier", "action": "Added item to cart", "details": "Airtight Canister x1 (SKU 339-2)"}
+{"timestamp": "2025-11-14 16:22:50", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-14 16:26:23", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251114-23C4DC | Total P120.00, Paid P120.00, Change P0.00, Tender: Cash P120.00. Items: Airtight Canister x1"}
+{"timestamp": "2025-11-14 16:26:28", "user": "cashier", "action": "Checkout cancelled", "details": "Cart empty"}
+{"timestamp": "2025-11-14 16:26:31", "user": "cashier", "action": "Added item to cart", "details": "None x1 (SKU 336)"}
+{"timestamp": "2025-11-14 16:26:34", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-14 16:27:18", "user": "cashier", "action": "Completed checkout", "details": "Ref POS-20251114-AC7ECC | Total P40.00, Paid P40.00, Change P0.00, Tender: Cash P40.00. Items: 336 x1"}
+{"timestamp": "2025-11-14 16:27:37", "user": "cashier", "action": "Simulation started", "details": "3 practice customers (Easy)"}
+{"timestamp": "2025-11-14 16:27:40", "user": "cashier", "action": "Set next item quantity", "details": "2"}
+{"timestamp": "2025-11-14 16:27:45", "user": "cashier", "action": "Added item to cart", "details": "None x2 (SKU VO-9915)"}
+{"timestamp": "2025-11-14 16:27:47", "user": "cashier", "action": "Set next item quantity", "details": "1"}
+{"timestamp": "2025-11-14 16:27:50", "user": "cashier", "action": "Added item to cart", "details": "None x1 (SKU VO-9613-L)"}
+{"timestamp": "2025-11-14 16:28:06", "user": "cashier", "action": "Added item to cart", "details": "Chair with Armrest BROWN x1 (SKU 9718-BROWN)"}
+{"timestamp": "2025-11-14 16:28:10", "user": "cashier", "action": "Selected payment method", "details": "Cash Only"}
+{"timestamp": "2025-11-14 16:28:20", "user": "cashier", "action": "Completed checkout (Simulation)", "details": "Ref POS-20251114-760E57 | Total P670.00, Paid P670.00, Change P0.00, Tender: Cash P670.00. Items: VO-9915 x2; VO-9613-L x1; Chair with Armrest BROWN x1"}
+{"timestamp": "2025-11-14 17:04:04", "user": "cashier", "action": "Simulation feedback", "details": "Customer 1: 43.3s (Needs Improvement), 100.0% (Perfect), receipt yes"}
